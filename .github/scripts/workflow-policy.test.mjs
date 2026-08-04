@@ -16,7 +16,7 @@ const PACKAGE_JSON_URL = new URL("package.json", ROOT_URL);
 const README_URL = new URL("README.md", ROOT_URL);
 const RUST_TOOLCHAIN_ACTION =
   "dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30";
-const WASM_PACK_INSTALL_ACTION = "taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853";
+const WASM_PACK_INSTALL_ACTION = "taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b";
 const WASM_PACK_WORKFLOWS = new Map([
   ["bench.yml", "        if: matrix.kind == 'node'\n"],
   ["ci.yml", ""],
@@ -267,7 +267,7 @@ describe("Pinned wasm-pack installation policy", () => {
         const install = [
           "      - name: Install wasm-pack",
           condition.trimEnd(),
-          `        uses: ${WASM_PACK_INSTALL_ACTION} # v2.83.2`,
+          `        uses: ${WASM_PACK_INSTALL_ACTION} # v2.83.4`,
           "        with:",
           "          tool: wasm-pack@0.13.1",
         ]
@@ -309,7 +309,7 @@ describe("Rust feature coverage", () => {
     const workflow = await readFile(CI_WORKFLOW_URL, "utf8");
     const job = workflowJob(workflow, "deny");
     const action = [
-      "      - uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2",
+      "      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2",
       "        with:",
       "          arguments: --all-features",
     ].join("\n");
