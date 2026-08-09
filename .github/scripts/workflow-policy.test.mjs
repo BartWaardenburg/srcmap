@@ -14,9 +14,14 @@ const DEPENDABOT_CONFIG_URL = new URL(".github/dependabot.yml", ROOT_URL);
 const FALLOW_CONFIG_URL = new URL(".fallowrc.json", ROOT_URL);
 const PACKAGE_JSON_URL = new URL("package.json", ROOT_URL);
 const README_URL = new URL("README.md", ROOT_URL);
-const RUST_TOOLCHAIN_ACTION =
-  "dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30";
-const WASM_PACK_INSTALL_ACTION = "taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b";
+const RUST_TOOLCHAIN_ACTION = "dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30";
+/** The pinned installer is read from the workflows rather than duplicated here:
+ * a version bump re-pins every `uses:` at once, and asserting one literal SHA
+ * only turns that bump into a test failure. What the policy actually protects
+ * is that the action stays SHA-pinned, declares its tool version, and reads the
+ * same in every workflow. */
+const WASM_PACK_INSTALL =
+  / {6}- name: Install wasm-pack\n(?<condition>(?: {8}if: .*\n)?) {8}uses: (?<action>taiki-e\/install-action@[0-9a-f]{40} # v\d+\.\d+\.\d+)\n {8}with:\n {10}tool: (?<tool>wasm-pack@\d+\.\d+\.\d+)\n/u;
 const WASM_PACK_WORKFLOWS = new Map([
   ["bench.yml", "        if: matrix.kind == 'node'\n"],
   ["ci.yml", ""],
@@ -189,9 +194,7 @@ describe("Dependabot policy", () => {
 
     for (const entry of await workflowFiles()) {
       const workflow = await readFile(new URL(entry.name, WORKFLOWS_URL), "utf8");
-      const uses = workflow
-        .split("\n")
-        .filter((line) => line.includes("dtolnay/rust-toolchain@"));
+      const uses = workflow.split("\n").filter((line) => line.includes("dtolnay/rust-toolchain@"));
       consumers += uses.length;
 
       for (const use of uses) {
@@ -256,6 +259,8 @@ describe("Pinned installer policy", () => {
 
 describe("Pinned wasm-pack installation policy", () => {
   it("uses only the pinned install action for wasm-pack in every workflow", async () => {
+    const pins = new Map();
+
     for (const entry of await workflowFiles()) {
       const workflow = await readFile(new URL(entry.name, WORKFLOWS_URL), "utf8");
 
@@ -264,16 +269,14 @@ describe("Pinned wasm-pack installation policy", () => {
 
       const condition = WASM_PACK_WORKFLOWS.get(entry.name);
       if (condition !== undefined) {
-        const install = [
-          "      - name: Install wasm-pack",
-          condition.trimEnd(),
-          `        uses: ${WASM_PACK_INSTALL_ACTION} # v2.83.4`,
-          "        with:",
-          "          tool: wasm-pack@0.13.1",
-        ]
-          .filter(Boolean)
-          .join("\n");
-        assert.ok(workflow.includes(install), `${entry.name}: missing pinned wasm-pack installer`);
+        const install = WASM_PACK_INSTALL.exec(workflow);
+        assert.ok(install, `${entry.name}: missing pinned wasm-pack installer`);
+        assert.equal(
+          install.groups.condition,
+          condition,
+          `${entry.name}: unexpected condition on the wasm-pack install step`,
+        );
+        pins.set(entry.name, `${install.groups.action} ${install.groups.tool}`);
       }
 
       if (/\bwasm-pack (?:build|test)\b/.test(workflow)) {
@@ -283,6 +286,19 @@ describe("Pinned wasm-pack installation policy", () => {
         );
       }
     }
+
+    assert.deepEqual(
+      [...WASM_PACK_WORKFLOWS.keys()].filter((name) => !pins.has(name)),
+      [],
+      "every workflow covered by the policy must declare the installer",
+    );
+    assert.equal(
+      new Set(pins.values()).size,
+      1,
+      `workflows disagree on the wasm-pack pin: ${[...pins]
+        .map(([name, pin]) => `${name} uses ${pin}`)
+        .join(", ")}`,
+    );
   });
 });
 
