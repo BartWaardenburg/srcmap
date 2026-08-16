@@ -30,7 +30,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
-      - uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # cargo-llvm-cov
+      - uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # cargo-llvm-cov
         with:
           tool: cargo-llvm-cov
 
@@ -46,7 +46,7 @@ jobs:
         run: corepack pnpm install --ignore-scripts --frozen-lockfile
 
       - name: Install wasm-pack
-        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
+        uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
         with:
           tool: wasm-pack@0.13.1
 
