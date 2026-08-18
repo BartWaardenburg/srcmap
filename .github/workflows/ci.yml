@@ -131,7 +131,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # cargo-audit
+      - uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # cargo-audit
         with:
           tool: cargo-audit
       - run: cargo audit
@@ -160,7 +160,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # cargo-shear
+      - uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # cargo-shear
         with:
           tool: cargo-shear
       - run: cargo shear
@@ -222,7 +222,7 @@ jobs:
       - name: Install JS dependencies
         run: corepack pnpm install --ignore-scripts --frozen-lockfile
       - name: Install wasm-pack
-        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
+        uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
         with:
           tool: wasm-pack@0.13.1
       - name: Build JavaScript test artifacts
