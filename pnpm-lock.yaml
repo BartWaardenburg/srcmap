@@ -43,8 +43,8 @@ importers:
         version: 2.1.2
     devDependencies:
       '@napi-rs/cli':
-        specifier: ^3.8.2
-        version: 3.8.2(@emnapi/runtime@1.11.2)
+        specifier: ^3.8.5
+        version: 3.8.5(@emnapi/runtime@1.11.2)
     optionalDependencies:
       '@srcmap/codec-darwin-arm64':
         specifier: 0.3.9
@@ -107,8 +107,8 @@ importers:
         version: 2.1.2
     devDependencies:
       '@napi-rs/cli':
-        specifier: ^3.8.2
-        version: 3.8.2(@emnapi/runtime@1.11.2)
+        specifier: ^3.8.5
+        version: 3.8.5(@emnapi/runtime@1.11.2)
     optionalDependencies:
       '@srcmap/sourcemap-darwin-arm64':
         specifier: 0.3.9
@@ -367,8 +367,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@napi-rs/cli@3.8.2':
-    resolution: {integrity: sha512-iFmp3Lo/ipXoJI1I/6V/xU4hQV42bXS3A7j8C+Wt3LOtYY7HFCilkhyUkN1igLJFXWMICq95kNxhNcwzNRd+Kw==}
+  '@napi-rs/cli@3.8.5':
+    resolution: {integrity: sha512-lOFzFYBeBpnFAajFiyu+RWCrh1j7/Ma7I5z87huUIGlUkyE8eYxIfNBuH8KOOxW3lkkUxP7CMcl5Hfq3EjgEkg==}
     engines: {node: ^20.17.0 || ^22.13.0 || >= 23.5.0}
     hasBin: true
     peerDependencies:
@@ -1704,7 +1704,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@napi-rs/cli@3.8.2(@emnapi/runtime@1.11.2)':
+  '@napi-rs/cli@3.8.5(@emnapi/runtime@1.11.2)':
     dependencies:
       '@inquirer/prompts': 8.5.2
       '@napi-rs/cross-toolchain': 1.0.3
