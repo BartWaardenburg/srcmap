@@ -428,8 +428,6 @@ impl DecodedMap {
 mod tests {
     use super::*;
 
-    // ── find_common_prefix ──────────────────────────────────────
-
     #[test]
     fn common_prefix_basic() {
         let paths = vec!["/a/b/c/file1.js", "/a/b/c/file2.js", "/a/b/c/file3.js"];
@@ -488,8 +486,6 @@ mod tests {
         assert_eq!(result, Some("/a/b/".to_string()));
     }
 
-    // ── make_relative_path ──────────────────────────────────────
-
     #[test]
     fn relative_path_sibling_dirs() {
         assert_eq!(make_relative_path("/a/b/c.js", "/a/d/e.js"), "../d/e.js");
@@ -519,8 +515,6 @@ mod tests {
     fn relative_path_completely_different() {
         assert_eq!(make_relative_path("/a/b/c.js", "/x/y/z.js"), "../../x/y/z.js");
     }
-
-    // ── is_sourcemap ────────────────────────────────────────────
 
     #[test]
     fn is_sourcemap_regular() {
@@ -572,8 +566,6 @@ mod tests {
     fn is_sourcemap_array() {
         assert!(!is_sourcemap("[]"));
     }
-
-    // ── resolve_source_map_url ──────────────────────────────────
 
     #[test]
     fn resolve_url_relative() {
@@ -648,8 +640,6 @@ mod tests {
         }
     }
 
-    // ── resolve_source_map_path ─────────────────────────────────
-
     #[test]
     fn resolve_path_simple() {
         let result = resolve_source_map_path(Path::new("/js/app.js"), "app.js.map");
@@ -667,8 +657,6 @@ mod tests {
         let result = resolve_source_map_path(Path::new("/src/app.js"), "maps/app.js.map");
         assert_eq!(result, Some(PathBuf::from("/src/maps/app.js.map")));
     }
-
-    // ── to_data_url ─────────────────────────────────────────────
 
     #[test]
     fn data_url_roundtrip() {
@@ -738,8 +726,6 @@ mod tests {
 
         String::from_utf8(result).unwrap()
     }
-
-    // ── RewriteOptions / rewrite_sources ────────────────────────
 
     fn make_test_sourcemap() -> SourceMap {
         let json = r#"{
@@ -840,8 +826,6 @@ mod tests {
         let rewritten = rewrite_sources(&sm, &opts);
         assert_eq!(rewritten.sources, sm.sources);
     }
-
-    // ── DecodedMap ──────────────────────────────────────────────
 
     #[test]
     fn decoded_map_from_json() {
