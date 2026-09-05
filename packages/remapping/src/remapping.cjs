@@ -1,6 +1,12 @@
 "use strict";
 
-const { remap: wasmRemap } = require("@srcmap/remapping-wasm");
+let wasmRemap;
+try {
+  wasmRemap = require("@srcmap/remapping-wasm").remap;
+} catch {
+  // Fallback for monorepo development
+  wasmRemap = require("../../remapping-wasm/pkg/srcmap_remapping_wasm.js").remap;
+}
 
 /** Result class with the same interface as @jridgewell/remapping's SourceMap. */
 class SourceMap {

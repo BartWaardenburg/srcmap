@@ -274,11 +274,14 @@ class SourceMapGenerator {
   constructor(opts) {
     const file = opts?.file || null;
     this._gen = new WasmGenerator(file);
+    this._file = file || undefined;
+    this._sourceRoot = opts?.sourceRoot || undefined;
     this._sourceIndices = new Map();
     this._nameIndices = new Map();
+    this._sourceContents = new Map();
 
-    if (opts?.sourceRoot) {
-      this._gen.setSourceRoot(opts.sourceRoot);
+    if (this._sourceRoot) {
+      this._gen.setSourceRoot(this._sourceRoot);
     }
   }
 
@@ -308,6 +311,7 @@ class SourceMapGenerator {
     const srcIdx = this._getSourceIndex(source);
     if (content != null) {
       this._gen.setSourceContent(srcIdx, content);
+      this._sourceContents.set(source, content);
     }
   }
 
@@ -320,13 +324,27 @@ class SourceMapGenerator {
     return this._gen.toJSON();
   }
 
-  // Accepted for API parity; only the argument check from Mozilla source-map is implemented.
   applySourceMap(consumer, sourceFile, _sourceMapPath) {
-    if (sourceFile == null && consumer.file == null) {
-      throw new Error(
-        "SourceMapGenerator.prototype.applySourceMap requires either an explicit source file, " +
-          'or the source map\'s "file" property. Both were omitted.',
-      );
+    let source = sourceFile;
+    if (source == null) {
+      if (consumer.file == null) {
+        throw new Error(
+          "SourceMapGenerator.prototype.applySourceMap requires either an explicit source file, " +
+            'or the source map\'s "file" property. Both were omitted.',
+        );
+      }
+      source = consumer.file;
+    }
+
+    if (!this.toJSON().sources.includes(source)) return;
+
+    if (consumer.sourcesContent) {
+      for (let i = 0; i < consumer.sources.length; i++) {
+        const content = consumer.sourcesContent[i];
+        if (content != null) {
+          this._sourceContents.set(consumer.sources[i], content);
+        }
+      }
     }
   }
 
