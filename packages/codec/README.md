@@ -52,10 +52,6 @@ Encode decoded mappings back into a VLQ string.
 | `[genCol, srcIdx, origLine, origCol]` | With source mapping |
 | `[genCol, srcIdx, origLine, origCol, nameIdx]` | With source mapping and name |
 
-## Compatibility
-
-API-compatible with `@jridgewell/sourcemap-codec` — same function signatures, same output format. Can be used as a drop-in replacement.
-
 ## Part of [srcmap](https://github.com/fallow-rs/srcmap)
 
 High-performance source map tooling written in Rust. See also:

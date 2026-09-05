@@ -5,7 +5,7 @@
 
 CLI tool to inspect, validate, compose, and manipulate source maps.
 
-Agent-friendly with `--json` structured output on all commands and `srcmap schema` for runtime introspection.
+Agent-friendly with `--json` structured output on most commands and `srcmap schema` for runtime introspection.
 
 ## Install
 
@@ -77,7 +77,7 @@ srcmap sources bundle.js.map
 # Extract all original sources to disk
 srcmap sources bundle.js.map --extract -o ./src
 
-# All commands support --json for structured output
+# Most commands support --json for structured output
 srcmap info bundle.js.map --json
 
 # Introspect all commands and their arguments
@@ -86,7 +86,7 @@ srcmap schema
 
 ## Features
 
-- **Structured JSON output** — `--json` flag on all commands for machine-readable output
+- **Structured JSON output** — `--json` flag on most commands for machine-readable output
 - **Agent introspection** — `srcmap schema` describes all commands, args, types, and flags as JSON
 - **stdin support** — use `-` as file argument to read from stdin
 - **Dry run** — `--dry-run` on mutating commands (`concat`, `remap`) to validate without writing

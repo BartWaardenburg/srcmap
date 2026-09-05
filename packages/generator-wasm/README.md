@@ -66,19 +66,6 @@ Create a new source map generator. `file` is the optional output filename.
 |----------|------|-------------|
 | `mappingCount` | `number` | Total number of mappings added |
 
-## Build targets
-
-```bash
-# Node.js (default)
-npm run build
-
-# Browser (ES module + .wasm)
-npm run build:web
-
-# Bundler (e.g. webpack, vite)
-npm run build:bundler
-```
-
 ## Part of [srcmap](https://github.com/fallow-rs/srcmap)
 
 High-performance source map tooling written in Rust. See also:

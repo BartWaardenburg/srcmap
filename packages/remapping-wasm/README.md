@@ -74,19 +74,6 @@ Compose source maps through a transform chain.
 
 Returns the composed source map as a JSON string.
 
-## Build targets
-
-```bash
-# Node.js (default)
-npm run build
-
-# Browser (ES module + .wasm)
-npm run build:web
-
-# Bundler (e.g. webpack, vite)
-npm run build:bundler
-```
-
 ## Part of [srcmap](https://github.com/fallow-rs/srcmap)
 
 High-performance source map tooling written in Rust. See also:

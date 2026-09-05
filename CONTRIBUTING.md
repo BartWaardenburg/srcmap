@@ -57,6 +57,8 @@ packages/
   generator/         Experimental NAPI bindings for generator (unpublished)
   remapping/         JavaScript remapping wrapper plus experimental NAPI bindings
   trace-mapping/     Drop-in @jridgewell/trace-mapping replacement
+  gen-mapping/       Drop-in @jridgewell/gen-mapping replacement
+  source-map/        Drop-in Mozilla source-map v0.6 replacement
 
 benchmarks/       JS benchmarks comparing against existing libraries
 ```

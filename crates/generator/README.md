@@ -87,7 +87,7 @@ On-the-fly VLQ encoder that emits mappings as they are added, without collecting
 | `add_range_mapping(...)` | Add a range mapping (ECMA-426 Stage 2 proposal) |
 | `add_named_range_mapping(...)` | Add a named range mapping |
 | `to_json() -> String` | Serialize to source map v3 JSON |
-| `to_decoded_map() -> SourceMap` | Build a `SourceMap` directly |
+| `to_decoded_map() -> Result<SourceMap, ParseError>` | Build a `SourceMap` directly |
 
 ## Features
 

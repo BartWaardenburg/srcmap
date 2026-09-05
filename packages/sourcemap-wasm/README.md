@@ -68,8 +68,7 @@ const positions = lookup.originalPositionsFor(sm, [startOffset, endOffset]);
 // Int32Array in @srcmap/sourcemap-wasm, number[] in @srcmap/sourcemap
 ```
 
-Use one `GeneratedOffsetLookup` per generated asset and reuse it across beacon batches. That matches the `fallow-cloud` shape better than recomputing line starts for every flush.
-The helper preserves the backend-native batch shape: `Int32Array` for `@srcmap/sourcemap-wasm`, plain arrays for `@srcmap/sourcemap`.
+Use one `GeneratedOffsetLookup` per generated asset and reuse it across batches instead of recomputing line starts for every lookup.
 
 ## API
 
@@ -192,19 +191,6 @@ The batch API (`originalPositionsFor`) returns a flat `Int32Array`, avoiding per
 | Few individual lookups | `@jridgewell/trace-mapping` (lower per-call overhead) |
 | Native Node.js addons | `@srcmap/sourcemap` (NAPI) |
 | Browser environments | **@srcmap/sourcemap-wasm** |
-
-## Build targets
-
-```bash
-# Node.js (default)
-npm run build
-
-# Browser (ES module + .wasm)
-npm run build:web
-
-# Bundler (e.g. webpack, vite)
-npm run build:bundler
-```
 
 ## Part of [srcmap](https://github.com/fallow-rs/srcmap)
 

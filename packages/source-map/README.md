@@ -84,7 +84,7 @@ generator.destroy()
 |--------|-------------|
 | `addMapping(mapping)` | Add a mapping (object-based API) |
 | `setSourceContent(source, content)` | Set source content for a file |
-| `applySourceMap(consumer, source?, path?)` | Apply a consumer's mappings to this generator |
+| `applySourceMap(consumer, source?, path?)` | Accepted for API parity; validates its arguments and does not rewrite mappings |
 | `toJSON()` | Return as parsed source map object |
 | `toString()` | Return as JSON string |
 | `destroy()` | Free WASM resources |

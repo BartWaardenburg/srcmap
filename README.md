@@ -266,7 +266,7 @@ srcmap validate bundle.js.map --json        # Validate a source map
 srcmap lookup bundle.js.map 42 10 --context 5 --json  # Original position with source context
 srcmap resolve bundle.js.map --source src/app.ts 10 0 --json  # Reverse lookup
 srcmap mappings bundle.js.map --limit 100 --json              # List mappings
-srcmap decode "AAAA;AACA" --json            # Decode VLQ mappings string
+srcmap decode "AAAA;AACA" --compact         # Decode VLQ mappings string
 srcmap encode mappings.json --json          # Encode back to VLQ
 srcmap concat a.js.map b.js.map -o bundle.js.map              # Concatenate
 srcmap remap minified.js.map --dir ./maps -o composed.js.map  # Compose
@@ -277,7 +277,7 @@ srcmap sources bundle.js.map --extract -o ./src                # Extract origina
 srcmap schema                               # All commands as JSON (for agents)
 ```
 
-All commands support `--json` for structured output.
+All commands except `decode` and `schema` support `--json` for structured output.
 
 ## Why srcmap is fast
 

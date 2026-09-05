@@ -87,19 +87,6 @@ Returns an array of `{ functionName: string | null, file: string, line: number, 
 | SpiderMonkey (Firefox) | `func@file:line:col` |
 | JavaScriptCore (Safari) | `func@file:line:col` |
 
-## Build targets
-
-```bash
-# Node.js (default)
-npm run build
-
-# Browser (ES module + .wasm)
-npm run build:web
-
-# Bundler (e.g. webpack, vite)
-npm run build:bundler
-```
-
 ## Part of [srcmap](https://github.com/fallow-rs/srcmap)
 
 High-performance source map tooling written in Rust. See also:

@@ -61,8 +61,8 @@ Parse a source map from a JSON string.
 | `originalPositionFor(line, column)` | `{ source, line, column, name } \| null` | Forward lookup (0-based) |
 | `generatedPositionFor(source, line, column)` | `{ line, column } \| null` | Reverse lookup (0-based) |
 | `originalPositionsFor(positions: number[])` | `number[]` | Batch forward lookup |
-| `source(index)` | `string` | Resolve source index to filename |
-| `name(index)` | `string` | Resolve name index to string |
+| `source(index)` | `string \| null` | Resolve source index to filename |
+| `name(index)` | `string \| null` | Resolve name index to string |
 
 ### Instance properties
 

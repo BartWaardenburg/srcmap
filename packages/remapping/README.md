@@ -43,14 +43,6 @@ const composed = remapping([minifiedMap, intermediateMap], (sourcefile) => {
 })
 ```
 
-### Options
-
-```js
-const composed = remapping(minifiedMap, loader, {
-  excludeContent: true, // Omit sourcesContent from the output
-})
-```
-
 ## API compatibility
 
 | Export | Description |
