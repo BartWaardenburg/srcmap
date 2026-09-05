@@ -65,7 +65,7 @@ fn main() {
     //   abs = 1000, VLQ representation = 1000 << 1 | 0 = 2000 (positive, sign bit = 0)
     //   2000 in binary: 11111010000
     //   Split into 5-bit groups (LSB first): 10000, 11101, 01 -> with continuation: 110000, 111101, 01
-    //   Base64 digits: 48 = 'w', 61 = '9', 1 = 'B' -> but let's just show what the encoder produces
+    //   Base64 digits: 48 = 'w', 61 = '9', 1 = 'B'
 
     let mut buf = Vec::new();
     vlq_encode(&mut buf, 1000);
@@ -75,8 +75,7 @@ fn main() {
     println!("  Base64 string: {}", std::str::from_utf8(&buf).unwrap());
     println!();
 
-    for (i, &byte) in buf.iter().enumerate() {
-        let digit = byte; // the base64 character
+    for (i, &digit) in buf.iter().enumerate() {
         let is_last = i == buf.len() - 1;
 
         // Decode the base64 character back to its 6-bit value for display

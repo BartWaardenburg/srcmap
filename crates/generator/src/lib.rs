@@ -31,8 +31,6 @@ use srcmap_scopes::ScopeInfo;
 
 use std::io;
 
-// ── Public types ───────────────────────────────────────────────────
-
 /// Decomposed source map parts for structured access without JSON serialization.
 ///
 /// Returned by [`SourceMapGenerator::into_parts`] and [`StreamingGenerator::into_parts`].
@@ -124,22 +122,7 @@ pub struct SourceMapGenerator {
 impl SourceMapGenerator {
     /// Create a new empty source map generator.
     pub fn new(file: Option<String>) -> Self {
-        Self {
-            file,
-            source_root: None,
-            sources: Vec::new(),
-            sources_content: Vec::new(),
-            names: Vec::new(),
-            mappings: Vec::new(),
-            ignore_list: Vec::new(),
-            debug_id: None,
-            scopes: None,
-            has_range_mappings: false,
-            assume_sorted: false,
-            mappings_in_order: true,
-            source_map: FxHashMap::default(),
-            name_map: FxHashMap::default(),
-        }
+        Self::with_capacity(file, 0)
     }
 
     /// Create a new source map generator with pre-allocated capacity.
@@ -230,13 +213,11 @@ impl SourceMapGenerator {
         }
     }
 
-    /// Add a mapping with no source information (generated-only).
     /// Push a mapping, maintaining the incremental `mappings_in_order` flag.
     ///
     /// Single choke point for every mapping insertion: keeping the
     /// non-decreasing-position invariant updated here lets the encode path
-    /// avoid an O(n) sortedness scan. Mirrors `is_sorted_by_position`'s
-    /// `(generated_line, generated_column)` ordering exactly.
+    /// avoid an O(n) sortedness scan.
     #[inline]
     fn push_mapping(&mut self, mapping: Mapping) {
         if mapping.is_range_mapping {
@@ -252,6 +233,7 @@ impl SourceMapGenerator {
         self.mappings.push(mapping);
     }
 
+    /// Add a mapping with no source information (generated-only).
     pub fn add_generated_mapping(&mut self, generated_line: u32, generated_column: u32) {
         self.push_mapping(Mapping {
             generated_line,
@@ -396,13 +378,7 @@ impl SourceMapGenerator {
             return;
         }
 
-        // Sort mappings by (generated_line, generated_column)
-        let mut sorted: Vec<&Mapping> = self.mappings.iter().collect();
-        sorted.sort_unstable_by(|a, b| {
-            a.generated_line
-                .cmp(&b.generated_line)
-                .then(a.generated_column.cmp(&b.generated_column))
-        });
+        let sorted = self.sorted_mappings();
 
         #[cfg(feature = "parallel")]
         if sorted.len() >= 4096 {
@@ -414,38 +390,26 @@ impl SourceMapGenerator {
         Self::encode_sequential_into(&sorted, out);
     }
 
-    /// Encode all mappings to a VLQ-encoded string.
-    #[allow(dead_code, reason = "used by tests and the parallel encoding path")]
-    fn encode_mappings(&self) -> String {
-        if self.mappings.is_empty() {
-            return String::new();
-        }
-
-        // Fast path: skip sort when mappings are already in order (common case
-        // for bundlers that emit mappings sequentially).
-        if self.assume_sorted || self.mappings_in_order {
-            #[cfg(feature = "parallel")]
-            if self.mappings.len() >= 4096 {
-                let refs: Vec<&Mapping> = self.mappings.iter().collect();
-                return Self::encode_parallel_impl(&refs);
-            }
-            return Self::encode_sequential_impl(&self.mappings);
-        }
-
-        // Sort mappings by (generated_line, generated_column)
+    /// Mappings sorted by `(generated_line, generated_column)`.
+    fn sorted_mappings(&self) -> Vec<&Mapping> {
         let mut sorted: Vec<&Mapping> = self.mappings.iter().collect();
         sorted.sort_unstable_by(|a, b| {
             a.generated_line
                 .cmp(&b.generated_line)
                 .then(a.generated_column.cmp(&b.generated_column))
         });
+        sorted
+    }
 
-        #[cfg(feature = "parallel")]
-        if sorted.len() >= 4096 {
-            return Self::encode_parallel_impl(&sorted);
-        }
+    /// Encode all mappings to a VLQ-encoded string.
+    fn encode_mappings(&self) -> String {
+        let mut out: Vec<u8> = Vec::new();
+        self.encode_mappings_into(&mut out);
 
-        Self::encode_sequential_impl(&sorted)
+        debug_assert!(out.is_ascii());
+        // SAFETY: vlq_encode only pushes bytes from BASE64_ENCODE (all ASCII),
+        // and we only add b';' and b',', all valid UTF-8.
+        unsafe { String::from_utf8_unchecked(out) }
     }
 
     /// Encode mappings directly into an existing byte buffer.
@@ -512,20 +476,6 @@ impl SourceMapGenerator {
         }
     }
 
-    #[inline]
-    #[allow(dead_code, reason = "used by tests and the parallel encoding path")]
-    fn encode_sequential_impl<T: std::borrow::Borrow<Mapping>>(sorted: &[T]) -> String {
-        let max_line = sorted.last().map_or(0, |m| m.borrow().generated_line as usize);
-        let mut out: Vec<u8> =
-            Vec::with_capacity(sorted.len() * (5 * MAX_VLQ_BYTES + 1) + max_line + 1);
-        Self::encode_sequential_into(sorted, &mut out);
-
-        debug_assert!(out.is_ascii());
-        // SAFETY: vlq_encode only pushes bytes from BASE64_ENCODE (all ASCII),
-        // and we only add b';' and b',' — all valid UTF-8.
-        unsafe { String::from_utf8_unchecked(out) }
-    }
-
     #[cfg(feature = "parallel")]
     fn encode_parallel_impl(sorted: &[&Mapping]) -> String {
         use rayon::prelude::*;
@@ -580,9 +530,9 @@ impl SourceMapGenerator {
             out.extend_from_slice(bytes);
         }
 
+        debug_assert!(out.is_ascii());
         // SAFETY: vlq_encode only pushes bytes from BASE64_ENCODE (all ASCII),
         // and we only add b';' — all valid UTF-8.
-        debug_assert!(out.is_ascii());
         unsafe { String::from_utf8_unchecked(out) }
     }
 
@@ -611,13 +561,7 @@ impl SourceMapGenerator {
         let ordered: Vec<&Mapping> = if self.assume_sorted || self.mappings_in_order {
             self.mappings.iter().collect()
         } else {
-            let mut sorted: Vec<&Mapping> = self.mappings.iter().collect();
-            sorted.sort_unstable_by(|a, b| {
-                a.generated_line
-                    .cmp(&b.generated_line)
-                    .then(a.generated_column.cmp(&b.generated_column))
-            });
-            sorted
+            self.sorted_mappings()
         };
 
         let max_line = ordered.last().map_or(0, |m| m.generated_line);
@@ -686,32 +630,28 @@ impl SourceMapGenerator {
         self.write_sources_content_json(&mut json);
 
         json.extend_from_slice(br#","names":["#);
-        write_json_string_array(&mut json, names_for_json.as_ref());
+        write_json_string_array(&mut json, &names_for_json);
         json.push(b']');
 
-        // mappings — VLQ string is pure base64/,/; so no escaping needed.
-        // Write directly into the json buffer to avoid intermediate String allocation.
+        // The VLQ string is pure base64 plus `,` and `;`, so no escaping is needed
+        // and it can be written straight into the JSON buffer.
         json.extend_from_slice(br#","mappings":""#);
         self.encode_mappings_into(&mut json);
         json.push(b'"');
 
-        // ignoreList
-        self.write_ignore_list_json(&mut json);
+        write_ignore_list_json(&mut json, &self.ignore_list);
 
-        // rangeMappings (only if any range mappings exist)
         if let Some(ref range_mappings) = self.encode_range_mappings() {
             json.extend_from_slice(br#","rangeMappings":""#);
             json.extend_from_slice(range_mappings.as_bytes());
             json.push(b'"');
         }
 
-        // debugId
         if let Some(ref id) = self.debug_id {
             json.extend_from_slice(br#","debugId":"#);
             json_quote_into(&mut json, id);
         }
 
-        // scopes (ECMA-426 scopes proposal)
         if let Some(ref s) = scopes_str {
             json.extend_from_slice(br#","scopes":"#);
             json_quote_into(&mut json, s);
@@ -744,12 +684,6 @@ impl SourceMapGenerator {
     }
 
     fn write_sources_content_json(&self, json: &mut Vec<u8>) {
-        if !self.sources_content.iter().any(|c| c.is_some()) {
-            return;
-        }
-
-        json.extend_from_slice(br#","sourcesContent":["#);
-
         #[cfg(feature = "parallel")]
         {
             use rayon::prelude::*;
@@ -766,82 +700,19 @@ impl SourceMapGenerator {
                         None => "null".to_string(),
                     })
                     .collect();
+                json.extend_from_slice(br#","sourcesContent":["#);
                 for (i, q) in quoted.iter().enumerate() {
                     if i > 0 {
                         json.push(b',');
                     }
                     json.extend_from_slice(q.as_bytes());
                 }
-            } else {
-                for (i, c) in self.sources_content.iter().enumerate() {
-                    if i > 0 {
-                        json.push(b',');
-                    }
-                    match c {
-                        Some(content) => json_quote_into(json, content),
-                        None => json.extend_from_slice(b"null"),
-                    }
-                }
+                json.push(b']');
+                return;
             }
         }
 
-        #[cfg(not(feature = "parallel"))]
-        for (i, c) in self.sources_content.iter().enumerate() {
-            if i > 0 {
-                json.push(b',');
-            }
-            match c {
-                Some(content) => json_quote_into(json, content),
-                None => json.extend_from_slice(b"null"),
-            }
-        }
-
-        json.push(b']');
-    }
-
-    fn write_sources_to_writer(&self, writer: &mut impl io::Write) -> io::Result<()> {
-        writer.write_all(br#","sources":["#)?;
-        for (i, s) in self.sources.iter().enumerate() {
-            if i > 0 {
-                writer.write_all(b",")?;
-            }
-            write_json_quoted(writer, s)?;
-        }
-        writer.write_all(b"]")
-    }
-
-    fn write_sources_content_to_writer(&self, writer: &mut impl io::Write) -> io::Result<()> {
-        if !self.sources_content.iter().any(|c| c.is_some()) {
-            return Ok(());
-        }
-
-        writer.write_all(br#","sourcesContent":["#)?;
-        for (i, c) in self.sources_content.iter().enumerate() {
-            if i > 0 {
-                writer.write_all(b",")?;
-            }
-            match c {
-                Some(content) => write_json_quoted(writer, content)?,
-                None => writer.write_all(b"null")?,
-            }
-        }
-        writer.write_all(b"]")
-    }
-
-    fn write_ignore_list_json(&self, json: &mut Vec<u8>) {
-        if self.ignore_list.is_empty() {
-            return;
-        }
-
-        use std::io::Write;
-        json.extend_from_slice(br#","ignoreList":["#);
-        for (i, &idx) in self.ignore_list.iter().enumerate() {
-            if i > 0 {
-                json.push(b',');
-            }
-            let _ = write!(json, "{idx}");
-        }
-        json.push(b']');
+        write_sources_content_json(json, &self.sources_content);
     }
 
     /// Get the number of mappings.
@@ -866,23 +737,12 @@ impl SourceMapGenerator {
 
         let sm_mappings: Vec<srcmap_sourcemap::Mapping> =
             if self.assume_sorted || self.mappings_in_order {
-                // Skip sort — iterate directly over the mappings vec
                 self.mappings.iter().map(convert_mapping).collect()
             } else {
-                // Sort mappings by (generated_line, generated_column) — same as encode_mappings
-                let mut sorted: Vec<&Mapping> = self.mappings.iter().collect();
-                sorted.sort_unstable_by(|a, b| {
-                    a.generated_line
-                        .cmp(&b.generated_line)
-                        .then(a.generated_column.cmp(&b.generated_column))
-                });
-                sorted.iter().map(|m| convert_mapping(m)).collect()
+                self.sorted_mappings().into_iter().map(convert_mapping).collect()
             };
 
-        // Build sources_content: convert Vec<Option<String>> → Vec<Option<String>>
-        let sources_content: Vec<Option<String>> = self.sources_content.clone();
-
-        // Build the source root-prefixed sources (matching what from_json does)
+        // Prefix sources with the source root, matching what from_json does.
         let sources: Vec<String> = match &self.source_root {
             Some(root) if !root.is_empty() => {
                 self.sources.iter().map(|s| format!("{root}{s}")).collect()
@@ -894,7 +754,7 @@ impl SourceMapGenerator {
             self.file.clone(),
             self.source_root.clone(),
             sources,
-            sources_content,
+            self.sources_content.clone(),
             self.names.clone(),
             sm_mappings,
             self.ignore_list.clone(),
@@ -944,53 +804,32 @@ impl SourceMapGenerator {
             write_json_quoted(writer, root)?;
         }
 
-        self.write_sources_to_writer(writer)?;
+        write_sources_to_writer(writer, &self.sources)?;
+        write_sources_content_to_writer(writer, &self.sources_content)?;
 
-        self.write_sources_content_to_writer(writer)?;
-
-        // names
         writer.write_all(br#","names":["#)?;
-        for (i, n) in names_for_json.iter().enumerate() {
-            if i > 0 {
-                writer.write_all(b",")?;
-            }
-            write_json_quoted(writer, n)?;
-        }
+        write_json_string_array_to_writer(writer, &names_for_json)?;
         writer.write_all(b"]")?;
 
-        // mappings
         writer.write_all(br#","mappings":""#)?;
         let mut vlq_buf: Vec<u8> = Vec::new();
         self.encode_mappings_into(&mut vlq_buf);
         writer.write_all(&vlq_buf)?;
         writer.write_all(b"\"")?;
 
-        // ignoreList
-        if !self.ignore_list.is_empty() {
-            writer.write_all(br#","ignoreList":["#)?;
-            for (i, &idx) in self.ignore_list.iter().enumerate() {
-                if i > 0 {
-                    writer.write_all(b",")?;
-                }
-                write!(writer, "{idx}")?;
-            }
-            writer.write_all(b"]")?;
-        }
+        write_ignore_list_to_writer(writer, &self.ignore_list)?;
 
-        // rangeMappings
         if let Some(ref range_mappings) = self.encode_range_mappings() {
             writer.write_all(br#","rangeMappings":""#)?;
             writer.write_all(range_mappings.as_bytes())?;
             writer.write_all(b"\"")?;
         }
 
-        // debugId
         if let Some(ref id) = self.debug_id {
             writer.write_all(br#","debugId":"#)?;
             write_json_quoted(writer, id)?;
         }
 
-        // scopes
         if let Some(ref s) = scopes_str {
             writer.write_all(br#","scopes":"#)?;
             write_json_quoted(writer, s)?;
@@ -1059,28 +898,7 @@ pub struct StreamingGenerator {
 impl StreamingGenerator {
     /// Create a new streaming source map generator.
     pub fn new(file: Option<String>) -> Self {
-        Self {
-            file,
-            source_root: None,
-            sources: Vec::new(),
-            sources_content: Vec::new(),
-            names: Vec::new(),
-            ignore_list: Vec::new(),
-            debug_id: None,
-            source_map: FxHashMap::default(),
-            name_map: FxHashMap::default(),
-            vlq_out: Vec::with_capacity(1024),
-            prev_gen_line: 0,
-            prev_gen_col: 0,
-            prev_source: 0,
-            prev_orig_line: 0,
-            prev_orig_col: 0,
-            prev_name: 0,
-            first_in_line: true,
-            mapping_count: 0,
-            line_local_index: 0,
-            range_entries: Vec::new(),
-        }
+        Self::with_capacity(file, 1024)
     }
 
     /// Create a new streaming source map generator with pre-allocated VLQ capacity.
@@ -1384,37 +1202,22 @@ impl StreamingGenerator {
             json_quote_into(&mut json, root);
         }
 
-        self.write_sources_json(&mut json);
-
-        if self.sources_content.iter().any(|c| c.is_some()) {
-            json.extend_from_slice(br#","sourcesContent":["#);
-            for (i, c) in self.sources_content.iter().enumerate() {
-                if i > 0 {
-                    json.push(b',');
-                }
-                match c {
-                    Some(content) => json_quote_into(&mut json, content),
-                    None => json.extend_from_slice(b"null"),
-                }
-            }
-            json.push(b']');
-        }
-
-        json.extend_from_slice(br#","names":["#);
-        for (i, n) in self.names.iter().enumerate() {
-            if i > 0 {
-                json.push(b',');
-            }
-            json_quote_into(&mut json, n);
-        }
+        json.extend_from_slice(br#","sources":["#);
+        write_json_string_array(&mut json, &self.sources);
         json.push(b']');
 
-        // VLQ string is pure base64/,/; — no escaping needed
+        write_sources_content_json(&mut json, &self.sources_content);
+
+        json.extend_from_slice(br#","names":["#);
+        write_json_string_array(&mut json, &self.names);
+        json.push(b']');
+
+        // The VLQ string is pure base64 plus `,` and `;`, so no escaping is needed.
         json.extend_from_slice(br#","mappings":""#);
         json.extend_from_slice(vlq.as_bytes());
         json.push(b'"');
 
-        self.write_ignore_list_json(&mut json);
+        write_ignore_list_json(&mut json, &self.ignore_list);
 
         if let Some(ref range_mappings) = self.encode_range_mappings() {
             json.extend_from_slice(br#","rangeMappings":""#);
@@ -1442,55 +1245,16 @@ impl StreamingGenerator {
         100 + sources_size + names_size + vlq_len + content_size
     }
 
-    fn write_sources_json(&self, json: &mut Vec<u8>) {
-        json.extend_from_slice(br#","sources":["#);
-        for (i, s) in self.sources.iter().enumerate() {
-            if i > 0 {
-                json.push(b',');
-            }
-            json_quote_into(json, s);
-        }
-        json.push(b']');
-    }
-
-    fn write_sources_to_writer(&self, writer: &mut impl io::Write) -> io::Result<()> {
-        writer.write_all(br#","sources":["#)?;
-        for (i, s) in self.sources.iter().enumerate() {
-            if i > 0 {
-                writer.write_all(b",")?;
-            }
-            write_json_quoted(writer, s)?;
-        }
-        writer.write_all(b"]")
-    }
-
-    fn write_ignore_list_json(&self, json: &mut Vec<u8>) {
-        if self.ignore_list.is_empty() {
-            return;
-        }
-
-        use std::io::Write;
-        json.extend_from_slice(br#","ignoreList":["#);
-        for (i, &idx) in self.ignore_list.iter().enumerate() {
-            if i > 0 {
-                json.push(b',');
-            }
-            let _ = write!(json, "{idx}");
-        }
-        json.push(b']');
-    }
-
     /// Directly construct a `SourceMap` from the streaming generator's state.
     ///
     /// Parses the already-encoded VLQ mappings to build a decoded `SourceMap`.
     /// More efficient than `to_json()` + `SourceMap::from_json()` since it
     /// skips JSON generation and parsing.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the internal VLQ-encoded mappings string is corrupted or
-    /// contains invalid VLQ sequences. This is not expected under normal use,
-    /// since the streaming encoder always produces valid output.
+    /// Returns an error only if the internal VLQ buffer fails to parse, which
+    /// the streaming encoder never produces under normal use.
     pub fn to_decoded_map(
         &self,
     ) -> Result<srcmap_sourcemap::SourceMap, srcmap_sourcemap::ParseError> {
@@ -1567,24 +1331,6 @@ impl StreamingGenerator {
         unsafe { std::str::from_utf8_unchecked(&self.vlq_out[..end]) }
     }
 
-    fn write_sources_content_to_writer(&self, writer: &mut impl io::Write) -> io::Result<()> {
-        if !self.sources_content.iter().any(|c| c.is_some()) {
-            return Ok(());
-        }
-
-        writer.write_all(br#","sourcesContent":["#)?;
-        for (i, c) in self.sources_content.iter().enumerate() {
-            if i > 0 {
-                writer.write_all(b",")?;
-            }
-            match c {
-                Some(content) => write_json_quoted(writer, content)?,
-                None => writer.write_all(b"null")?,
-            }
-        }
-        writer.write_all(b"]")
-    }
-
     /// Consume the streaming generator and return decomposed source map parts.
     ///
     /// Returns a [`SourceMapParts`] struct with individual fields (file, mappings,
@@ -1592,10 +1338,7 @@ impl StreamingGenerator {
     /// NAPI/WASM bindings that need structured access to each field.
     pub fn into_parts(self) -> SourceMapParts {
         let range_mappings = self.encode_range_mappings();
-        // Trim trailing semicolons from VLQ output
-        let end = self.vlq_out.iter().rposition(|&b| b != b';').map_or(0, |i| i + 1);
-        // SAFETY: VLQ output is always valid ASCII/UTF-8
-        let mappings = unsafe { String::from_utf8_unchecked(self.vlq_out[..end].to_vec()) };
+        let mappings = self.vlq_str().to_owned();
 
         SourceMapParts {
             file: self.file,
@@ -1629,44 +1372,25 @@ impl StreamingGenerator {
             write_json_quoted(writer, root)?;
         }
 
-        self.write_sources_to_writer(writer)?;
-        self.write_sources_content_to_writer(writer)?;
+        write_sources_to_writer(writer, &self.sources)?;
+        write_sources_content_to_writer(writer, &self.sources_content)?;
 
-        // names
         writer.write_all(br#","names":["#)?;
-        for (i, n) in self.names.iter().enumerate() {
-            if i > 0 {
-                writer.write_all(b",")?;
-            }
-            write_json_quoted(writer, n)?;
-        }
+        write_json_string_array_to_writer(writer, &self.names)?;
         writer.write_all(b"]")?;
 
-        // mappings
         writer.write_all(br#","mappings":""#)?;
         writer.write_all(vlq.as_bytes())?;
         writer.write_all(b"\"")?;
 
-        // ignoreList
-        if !self.ignore_list.is_empty() {
-            writer.write_all(br#","ignoreList":["#)?;
-            for (i, &idx) in self.ignore_list.iter().enumerate() {
-                if i > 0 {
-                    writer.write_all(b",")?;
-                }
-                write!(writer, "{idx}")?;
-            }
-            writer.write_all(b"]")?;
-        }
+        write_ignore_list_to_writer(writer, &self.ignore_list)?;
 
-        // rangeMappings
         if let Some(ref range_mappings) = self.encode_range_mappings() {
             writer.write_all(br#","rangeMappings":""#)?;
             writer.write_all(range_mappings.as_bytes())?;
             writer.write_all(b"\"")?;
         }
 
-        // debugId
         if let Some(ref id) = self.debug_id {
             writer.write_all(br#","debugId":"#)?;
             write_json_quoted(writer, id)?;
@@ -1785,6 +1509,97 @@ fn write_json_string_array(out: &mut Vec<u8>, items: &[String]) {
     }
 }
 
+fn write_json_string_array_to_writer(
+    writer: &mut impl io::Write,
+    items: &[String],
+) -> io::Result<()> {
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            writer.write_all(b",")?;
+        }
+        write_json_quoted(writer, item)?;
+    }
+    Ok(())
+}
+
+/// Write `,"sourcesContent":[...]`, or nothing when no source has content.
+fn write_sources_content_json(json: &mut Vec<u8>, contents: &[Option<String>]) {
+    if !contents.iter().any(|c| c.is_some()) {
+        return;
+    }
+
+    json.extend_from_slice(br#","sourcesContent":["#);
+    for (i, c) in contents.iter().enumerate() {
+        if i > 0 {
+            json.push(b',');
+        }
+        match c {
+            Some(content) => json_quote_into(json, content),
+            None => json.extend_from_slice(b"null"),
+        }
+    }
+    json.push(b']');
+}
+
+/// Write `,"ignoreList":[...]`, or nothing when the list is empty.
+fn write_ignore_list_json(json: &mut Vec<u8>, ignore_list: &[u32]) {
+    if ignore_list.is_empty() {
+        return;
+    }
+
+    use std::io::Write;
+    json.extend_from_slice(br#","ignoreList":["#);
+    for (i, &idx) in ignore_list.iter().enumerate() {
+        if i > 0 {
+            json.push(b',');
+        }
+        let _ = write!(json, "{idx}");
+    }
+    json.push(b']');
+}
+
+fn write_sources_to_writer(writer: &mut impl io::Write, sources: &[String]) -> io::Result<()> {
+    writer.write_all(br#","sources":["#)?;
+    write_json_string_array_to_writer(writer, sources)?;
+    writer.write_all(b"]")
+}
+
+fn write_sources_content_to_writer(
+    writer: &mut impl io::Write,
+    contents: &[Option<String>],
+) -> io::Result<()> {
+    if !contents.iter().any(|c| c.is_some()) {
+        return Ok(());
+    }
+
+    writer.write_all(br#","sourcesContent":["#)?;
+    for (i, c) in contents.iter().enumerate() {
+        if i > 0 {
+            writer.write_all(b",")?;
+        }
+        match c {
+            Some(content) => write_json_quoted(writer, content)?,
+            None => writer.write_all(b"null")?,
+        }
+    }
+    writer.write_all(b"]")
+}
+
+fn write_ignore_list_to_writer(writer: &mut impl io::Write, ignore_list: &[u32]) -> io::Result<()> {
+    if ignore_list.is_empty() {
+        return Ok(());
+    }
+
+    writer.write_all(br#","ignoreList":["#)?;
+    for (i, &idx) in ignore_list.iter().enumerate() {
+        if i > 0 {
+            writer.write_all(b",")?;
+        }
+        write!(writer, "{idx}")?;
+    }
+    writer.write_all(b"]")
+}
+
 /// JSON-quote a string, returning a new String (used in parallel contexts).
 #[cfg(feature = "parallel")]
 fn json_quote(s: &str) -> String {
@@ -1800,8 +1615,6 @@ fn write_json_quoted(writer: &mut impl io::Write, s: &str) -> io::Result<()> {
     json_quote_into(&mut buf, s);
     writer.write_all(&buf)
 }
-
-// ── Tests ──────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -1847,23 +1660,6 @@ mod tests {
         let loc = sm.original_position_for(0, 0).unwrap();
         assert_eq!(loc.name, Some(0));
         assert_eq!(sm.name(0), "myFunction");
-    }
-
-    #[test]
-    fn multiple_lines() {
-        let mut builder = SourceMapGenerator::new(None);
-        let src = builder.add_source("input.js");
-        builder.add_mapping(0, 0, src, 0, 0);
-        builder.add_mapping(1, 4, src, 1, 2);
-        builder.add_mapping(2, 0, src, 2, 0);
-
-        let json = builder.to_json();
-        let sm = srcmap_sourcemap::SourceMap::from_json(&json).unwrap();
-        assert_eq!(sm.line_count(), 3);
-
-        let loc = sm.original_position_for(1, 4).unwrap();
-        assert_eq!(loc.line, 1);
-        assert_eq!(loc.column, 2);
     }
 
     #[test]
@@ -2029,40 +1825,6 @@ mod tests {
     }
 
     #[test]
-    fn to_decoded_map_basic() {
-        let mut builder = SourceMapGenerator::new(Some("output.js".to_string()));
-        let src = builder.add_source("input.js");
-        builder.add_mapping(0, 0, src, 0, 0);
-        builder.add_mapping(1, 4, src, 1, 2);
-
-        let sm = builder.to_decoded_map();
-        assert_eq!(sm.mapping_count(), 2);
-        assert_eq!(sm.line_count(), 2);
-
-        let loc = sm.original_position_for(0, 0).unwrap();
-        assert_eq!(sm.source(loc.source), "input.js");
-        assert_eq!(loc.line, 0);
-        assert_eq!(loc.column, 0);
-
-        let loc = sm.original_position_for(1, 4).unwrap();
-        assert_eq!(loc.line, 1);
-        assert_eq!(loc.column, 2);
-    }
-
-    #[test]
-    fn to_decoded_map_with_names() {
-        let mut builder = SourceMapGenerator::new(None);
-        let src = builder.add_source("input.js");
-        let name = builder.add_name("myFunction");
-        builder.add_named_mapping(0, 0, src, 0, 0, name);
-
-        let sm = builder.to_decoded_map();
-        let loc = sm.original_position_for(0, 0).unwrap();
-        assert_eq!(loc.name, Some(0));
-        assert_eq!(sm.name(0), "myFunction");
-    }
-
-    #[test]
     fn to_decoded_map_matches_json_roundtrip() {
         let mut builder = SourceMapGenerator::new(Some("bundle.js".to_string()));
         for i in 0..5 {
@@ -2141,21 +1903,6 @@ mod tests {
         assert_eq!(sm.mapping_count(), 1);
         // Generated-only mapping has no source info
         assert!(sm.original_position_for(0, 0).is_none());
-    }
-
-    #[test]
-    fn to_decoded_map_multiple_sources() {
-        let mut builder = SourceMapGenerator::new(None);
-        let a = builder.add_source("a.js");
-        let b = builder.add_source("b.js");
-        builder.add_mapping(0, 0, a, 0, 0);
-        builder.add_mapping(1, 0, b, 0, 0);
-
-        let sm = builder.to_decoded_map();
-        let loc0 = sm.original_position_for(0, 0).unwrap();
-        let loc1 = sm.original_position_for(1, 0).unwrap();
-        assert_eq!(sm.source(loc0.source), "a.js");
-        assert_eq!(sm.source(loc1.source), "b.js");
     }
 
     #[test]
@@ -2522,17 +2269,11 @@ mod tests {
         fn parallel_matches_sequential() {
             let builder = build_large_generator(500, 20);
 
-            // Sort mappings the same way encode_mappings does
-            let mut sorted: Vec<&Mapping> = builder.mappings.iter().collect();
-            sorted.sort_unstable_by(|a, b| {
-                a.generated_line
-                    .cmp(&b.generated_line)
-                    .then(a.generated_column.cmp(&b.generated_column))
-            });
-
-            let sequential = SourceMapGenerator::encode_sequential_impl(&sorted);
+            let sorted = builder.sorted_mappings();
+            let mut sequential = Vec::new();
+            SourceMapGenerator::encode_sequential_into(&sorted, &mut sequential);
             let parallel = SourceMapGenerator::encode_parallel_impl(&sorted);
-            assert_eq!(sequential, parallel);
+            assert_eq!(String::from_utf8(sequential).unwrap(), parallel);
         }
 
         #[test]
@@ -2560,8 +2301,6 @@ mod tests {
             assert_eq!(loc.column, 25);
         }
     }
-
-    // ── StreamingGenerator tests ────────────────────────────────
 
     #[test]
     fn streaming_basic() {
@@ -2707,19 +2446,6 @@ mod tests {
         assert!(sm.original_position_for(5, 0).is_some());
     }
 
-    // ── Range mapping tests ───────────────────────────────────
-
-    #[test]
-    fn range_mapping_basic() {
-        let mut builder = SourceMapGenerator::new(None);
-        let src = builder.add_source("input.js");
-        builder.add_range_mapping(0, 0, src, 0, 0);
-        builder.add_mapping(0, 5, src, 0, 10);
-
-        let json = builder.to_json();
-        assert!(json.contains(r#""rangeMappings":"A""#));
-    }
-
     #[test]
     fn range_mapping_multiple_on_line() {
         let mut builder = SourceMapGenerator::new(None);
@@ -2776,19 +2502,6 @@ mod tests {
         let mappings = sm.all_mappings();
         assert!(mappings[0].is_range_mapping);
         assert!(!mappings[1].is_range_mapping);
-    }
-
-    // ── Streaming range mapping tests ────────────────────────────
-
-    #[test]
-    fn streaming_range_mapping_basic() {
-        let mut sg = StreamingGenerator::new(None);
-        let src = sg.add_source("input.js");
-        sg.add_range_mapping(0, 0, src, 0, 0);
-        sg.add_mapping(0, 5, src, 0, 10);
-
-        let json = sg.to_json();
-        assert!(json.contains(r#""rangeMappings":"A""#));
     }
 
     #[test]
@@ -2861,8 +2574,6 @@ mod tests {
             assert_eq!(a.is_range_mapping, b.is_range_mapping);
         }
     }
-
-    // ── into_parts tests ────────────────────────────────────
 
     #[test]
     fn into_parts_basic() {
@@ -2955,25 +2666,6 @@ mod tests {
         assert_eq!(parts.sources, vec!["input.js"]);
         assert_eq!(parts.names, vec!["x"]);
         assert!(!parts.mappings.is_empty());
-    }
-
-    // ── to_writer tests ────────────────────────────────────
-
-    #[test]
-    fn to_writer_matches_to_json() {
-        let mut builder = SourceMapGenerator::new(Some("output.js".to_string()));
-        let src = builder.add_source("input.js");
-        builder.set_source_content(src, "var x = 1;".to_string());
-        let name = builder.add_name("x");
-        builder.add_named_mapping(0, 0, src, 0, 4, name);
-        builder.add_mapping(1, 0, src, 1, 0);
-
-        let json = builder.to_json();
-        let mut buf = Vec::new();
-        builder.to_writer(&mut buf).unwrap();
-        let writer_output = String::from_utf8(buf).unwrap();
-
-        assert_eq!(json, writer_output);
     }
 
     #[test]

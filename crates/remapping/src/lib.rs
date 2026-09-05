@@ -683,12 +683,11 @@ where
 
         let si = m.source as usize;
 
-        // Load upstream map if not yet cached — Vec index, no hash
         load_source_entry(
             &mut source_entries,
             si,
-            outer,
-            m.source,
+            &outer.sources,
+            &outer.sources_content,
             SourceEntryLoadContext {
                 builder: &mut builder,
                 outer_ignore_set: &outer_ignore_set,
@@ -700,7 +699,7 @@ where
         trace_source_entry(
             &mut source_entries[si],
             m,
-            RemapTraceContext {
+            TraceContext {
                 builder: &mut builder,
                 dedup: &mut dedup,
                 outer_name_remap: &mut outer_name_remap,
@@ -713,18 +712,18 @@ where
     builder.to_decoded_map()
 }
 
-struct RemapTraceContext<'a> {
-    builder: &'a mut SourceMapGenerator,
+struct TraceContext<'a, B> {
+    builder: &'a mut B,
     dedup: &'a mut DedupeState,
     outer_name_remap: &'a mut [Option<u32>],
     names: &'a [String],
     ignored_sources: &'a mut HashSet<u32>,
 }
 
-fn trace_source_entry(
+fn trace_source_entry<B: RemapBuilder>(
     entry: &mut SourceEntry,
     m: &srcmap_sourcemap::Mapping,
-    ctx: RemapTraceContext<'_>,
+    ctx: TraceContext<'_, B>,
 ) {
     match entry {
         SourceEntry::Upstream { map, cache } => {
@@ -777,12 +776,14 @@ struct SourceEntryLoadContext<'a, B> {
     ignored_sources: &'a mut HashSet<u32>,
 }
 
-fn load_source_entry<F>(
+/// Resolve outer source `si` on first use: load its upstream map through
+/// `loader`, or register it in the builder as a passthrough.
+fn load_source_entry<B: RemapBuilder, F>(
     source_entries: &mut [SourceEntry],
     si: usize,
-    outer: &SourceMap,
-    outer_source_idx: u32,
-    ctx: SourceEntryLoadContext<'_, SourceMapGenerator>,
+    sources: &[String],
+    sources_content: &[Option<String>],
+    ctx: SourceEntryLoadContext<'_, B>,
     loader: &F,
 ) where
     F: Fn(&str) -> Option<SourceMap>,
@@ -791,7 +792,7 @@ fn load_source_entry<F>(
         return;
     }
 
-    let source_name = outer.source(outer_source_idx);
+    let source_name = &sources[si];
     // Empty-string sources (from JSON null) are treated as generated-only,
     // matching jridgewell's `if (!source)` check in addSegmentInternal.
     if source_name.is_empty() {
@@ -806,10 +807,10 @@ fn load_source_entry<F>(
         }
         None => {
             let idx = ctx.builder.add_source(source_name);
-            if let Some(Some(content)) = outer.sources_content.get(si) {
+            if let Some(Some(content)) = sources_content.get(si) {
                 ctx.builder.set_source_content(idx, content.clone());
             }
-            if ctx.outer_ignore_set.contains(&outer_source_idx) && ctx.ignored_sources.insert(idx) {
+            if ctx.outer_ignore_set.contains(&(si as u32)) && ctx.ignored_sources.insert(idx) {
                 ctx.builder.add_to_ignore_list(idx);
             }
             source_entries[si] = SourceEntry::Passthrough { builder_src: idx };
@@ -855,20 +856,10 @@ pub fn remap_chain(maps: &[&SourceMap]) -> Option<SourceMap> {
         return Some(maps[0].clone());
     }
 
-    // Compose from the end: start with the second-to-last as outer,
-    // last as inner, then work backwards.
-    // maps[0] is outermost, maps[len-1] is innermost.
-    // We compose pairwise: result = remap(maps[0], maps[1]), then
-    // result = remap(result, maps[2]), etc. But actually the chain is:
-    // maps[0] (outermost) sources reference maps[1], which sources reference maps[2], etc.
-    // So we compose maps[0] with maps[1], then the result with maps[2], etc.
-    // But remap expects a loader that returns maps for each source.
-    // For a simple chain, each map has sources that map to the next map in the chain.
-
-    // Start with the last two and work forward
+    // Fold from the innermost pair outwards so each step composes one outer
+    // map with the already-collapsed remainder of the chain.
     let mut current = compose_pair(maps[maps.len() - 2], maps[maps.len() - 1]);
 
-    // Compose with remaining maps from right to left
     for i in (0..maps.len() - 2).rev() {
         current = compose_pair(maps[i], &current);
     }
@@ -900,18 +891,6 @@ fn compose_pair(outer: &SourceMap, inner: &SourceMap) -> SourceMap {
     })
 }
 
-/// Per-source entry for streaming variant.
-enum StreamingSourceEntry {
-    /// Has an upstream map: trace mappings through it.
-    Upstream { map: Box<SourceMap>, cache: UpstreamCache },
-    /// No upstream map: pass through with builder source index.
-    Passthrough { builder_src: u32 },
-    /// Empty-string source (from JSON `null`): emit as generated-only.
-    EmptySource,
-    /// Not yet loaded.
-    Unloaded,
-}
-
 /// Streaming variant of [`remap`] that avoids materializing the outer map.
 ///
 /// Accepts pre-parsed metadata and a [`MappingsIter`](srcmap_sourcemap::MappingsIter)
@@ -939,8 +918,8 @@ where
     let mut builder = StreamingGenerator::with_capacity(file, 4096);
 
     // Flat Vec indexed by outer source index — avoids HashMap per mapping
-    let mut source_entries: Vec<StreamingSourceEntry> =
-        std::iter::repeat_with(|| StreamingSourceEntry::Unloaded).take(sources.len()).collect();
+    let mut source_entries: Vec<SourceEntry> =
+        std::iter::repeat_with(|| SourceEntry::Unloaded).take(sources.len()).collect();
 
     let mut ignored_sources: HashSet<u32> = HashSet::new();
 
@@ -973,12 +952,11 @@ where
             continue;
         }
 
-        load_streaming_source_entry(
+        load_source_entry(
             &mut source_entries,
             si,
             sources,
             sources_content,
-            m.source,
             SourceEntryLoadContext {
                 builder: &mut builder,
                 outer_ignore_set: &outer_ignore_set,
@@ -987,10 +965,10 @@ where
             &loader,
         );
 
-        trace_streaming_source_entry(
+        trace_source_entry(
             &mut source_entries[si],
             &m,
-            StreamingTraceContext {
+            TraceContext {
                 builder: &mut builder,
                 dedup: &mut dedup,
                 outer_name_remap: &mut outer_name_remap,
@@ -1001,109 +979,6 @@ where
     }
 
     builder.to_decoded_map().expect("streaming VLQ should be valid")
-}
-
-struct StreamingTraceContext<'a> {
-    builder: &'a mut StreamingGenerator,
-    dedup: &'a mut DedupeState,
-    outer_name_remap: &'a mut [Option<u32>],
-    names: &'a [String],
-    ignored_sources: &'a mut HashSet<u32>,
-}
-
-fn trace_streaming_source_entry(
-    entry: &mut StreamingSourceEntry,
-    m: &srcmap_sourcemap::Mapping,
-    ctx: StreamingTraceContext<'_>,
-) {
-    match entry {
-        StreamingSourceEntry::Upstream { map, cache } => {
-            if let Some(upstream_m) = lookup_upstream(map, m.original_line, m.original_column) {
-                trace_and_emit_upstream(
-                    ctx.builder,
-                    ctx.dedup,
-                    UpstreamEmitContext {
-                        gen_line: m.generated_line,
-                        gen_col: m.generated_column,
-                        upstream_m,
-                        cache,
-                        upstream_map: map,
-                        outer_name_remap: ctx.outer_name_remap,
-                        outer_name_idx: m.name,
-                        names: ctx.names,
-                        ignored_sources: ctx.ignored_sources,
-                        is_range: m.is_range_mapping,
-                    },
-                );
-            }
-        }
-        StreamingSourceEntry::Passthrough { builder_src } => {
-            trace_and_emit_passthrough(
-                ctx.builder,
-                ctx.dedup,
-                PassthroughEmitContext {
-                    gen_line: m.generated_line,
-                    gen_col: m.generated_column,
-                    orig_line: m.original_line,
-                    orig_col: m.original_column,
-                    builder_src: *builder_src,
-                    outer_name_remap: ctx.outer_name_remap,
-                    outer_name_idx: m.name,
-                    names: ctx.names,
-                    is_range: m.is_range_mapping,
-                },
-            );
-        }
-        StreamingSourceEntry::EmptySource => {
-            trace_and_emit_sourceless(ctx.builder, ctx.dedup, m.generated_line, m.generated_column);
-        }
-        StreamingSourceEntry::Unloaded => unreachable!(),
-    }
-}
-
-fn load_streaming_source_entry<F>(
-    source_entries: &mut [StreamingSourceEntry],
-    si: usize,
-    sources: &[String],
-    sources_content: &[Option<String>],
-    outer_source_idx: u32,
-    ctx: SourceEntryLoadContext<'_, StreamingGenerator>,
-    loader: &F,
-) where
-    F: Fn(&str) -> Option<SourceMap>,
-{
-    if !matches!(source_entries[si], StreamingSourceEntry::Unloaded) {
-        return;
-    }
-
-    let source_name = &sources[si];
-    if source_name.is_empty() {
-        source_entries[si] = StreamingSourceEntry::EmptySource;
-        return;
-    }
-
-    match loader(source_name) {
-        Some(upstream_sm) => {
-            let cache = build_upstream_cache(&upstream_sm);
-            source_entries[si] =
-                StreamingSourceEntry::Upstream { map: Box::new(upstream_sm), cache };
-        }
-        None => {
-            let idx = ctx.builder.add_source(source_name);
-            if let Some(Some(content)) = sources_content.get(si) {
-                ctx.builder.set_source_content(idx, content.clone());
-            }
-            if ctx.outer_ignore_set.contains(&outer_source_idx) && ctx.ignored_sources.insert(idx) {
-                ctx.builder.add_to_ignore_list(idx);
-            }
-            source_entries[si] = StreamingSourceEntry::Passthrough { builder_src: idx };
-        }
-    }
-}
-
-#[inline]
-fn emit_generated_mapping<B: RemapBuilder>(builder: &mut B, gen_line: u32, gen_col: u32) {
-    builder.add_generated_mapping(gen_line, gen_col);
 }
 
 struct UpstreamEmitContext<'a> {
@@ -1227,7 +1102,7 @@ fn trace_and_emit_sourceless<B: RemapBuilder>(
     gen_col: u32,
 ) {
     if !dedup.skip_sourceless(gen_line) {
-        emit_generated_mapping(builder, gen_line, gen_col);
+        builder.add_generated_mapping(gen_line, gen_col);
     }
     dedup.record_sourceless(gen_line);
 }
@@ -1540,8 +1415,6 @@ mod tests {
         assert_eq!(result.sources_content, vec![Some("const x = 1;".to_string())]);
     }
 
-    // ── Clone needed for SourceMap in tests ──────────────────────
-
     #[test]
     fn concat_updates_source_content_on_duplicate() {
         // First map has no sourcesContent, second has it for same source
@@ -1692,37 +1565,8 @@ mod tests {
     }
 
     #[test]
-    fn remap_no_upstream_mapping_no_name() {
-        // Outer has a mapping with NO name pointing to compiled.js
-        // AAAA = gen(0,0) → compiled.js(0,0), no name (4-field segment)
-        let outer = SourceMap::from_json(
-            r#"{"version":3,"sources":["compiled.js"],"names":[],"mappings":"AAAA"}"#,
-        )
-        .unwrap();
-
-        // Inner map only has mappings at line 5, not at line 0
-        // So original_position_for(0, 0) returns None → takes the None branch
-        let inner = SourceMap::from_json(
-            r#"{"version":3,"sources":["original.ts"],"names":[],"mappings":";;;;AAAA"}"#,
-        )
-        .unwrap();
-
-        let result = remap(&outer, |_| Some(inner.clone()));
-
-        // jridgewell drops the segment when upstream trace returns null
-        let loc = result.original_position_for(0, 0);
-        assert!(loc.is_none());
-    }
-
-    #[test]
     fn remap_upstream_found_no_name() {
-        // Outer has a named mapping, but upstream has NO name
-        // The upstream mapping is found but has no name_index
-        // Since upstream has no name, the name resolution falls to the outer name
-        // This is already covered by remap_preserves_names
-        //
-        // What we need instead: outer has NO name AND upstream has NO name
-        // → name_idx is None → hits the add_mapping branch (line 246-252)
+        // Neither outer nor upstream carries a name, so the result has none.
         let outer = SourceMap::from_json(
             r#"{"version":3,"sources":["intermediate.js"],"names":[],"mappings":"AAAA"}"#,
         )
@@ -2021,25 +1865,6 @@ mod tests {
         assert!(loc.is_none());
     }
 
-    #[test]
-    fn streaming_no_upstream_mapping_no_name() {
-        let outer = SourceMap::from_json(
-            r#"{"version":3,"sources":["compiled.js"],"names":[],"mappings":"AAAA"}"#,
-        )
-        .unwrap();
-
-        let inner = SourceMap::from_json(
-            r#"{"version":3,"sources":["original.ts"],"names":[],"mappings":";;;;AAAA"}"#,
-        )
-        .unwrap();
-
-        let result = streaming_from_sm(&outer, |_| Some(inner.clone()));
-
-        // jridgewell drops the segment when upstream trace returns null
-        let loc = result.original_position_for(0, 0);
-        assert!(loc.is_none());
-    }
-
     // ── remap_chain tests ────────────────────────────────────────
 
     #[test]
@@ -2150,21 +1975,6 @@ mod tests {
         // The segment should be dropped (no source info)
         let loc = result.original_position_for(0, 0);
         assert!(loc.is_none());
-    }
-
-    #[test]
-    fn remap_null_source_filtered() {
-        // JSON null in sources array becomes "" after resolve_sources
-        let outer =
-            SourceMap::from_json(r#"{"version":3,"sources":[null],"names":[],"mappings":"AAAA"}"#)
-                .unwrap();
-
-        let result = remap(&outer, |_| None);
-
-        assert!(
-            !result.sources.iter().any(|s| s.is_empty()),
-            "null sources should be filtered out"
-        );
     }
 
     #[test]

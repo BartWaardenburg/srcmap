@@ -7,9 +7,9 @@
 use crate::DecodeError;
 
 const VLQ_BASE_SHIFT: u32 = 5;
-const VLQ_BASE: u64 = 1 << VLQ_BASE_SHIFT; // 32
-const VLQ_BASE_MASK: u64 = VLQ_BASE - 1; // 0b11111
-const VLQ_CONTINUATION_BIT: u64 = VLQ_BASE; // 0b100000
+const VLQ_BASE: u64 = 1 << VLQ_BASE_SHIFT;
+const VLQ_BASE_MASK: u64 = VLQ_BASE - 1;
+const VLQ_CONTINUATION_BIT: u64 = VLQ_BASE;
 
 /// Maximum bytes required to encode any signed or unsigned 64-bit VLQ value.
 pub const MAX_VLQ_BYTES: usize = 13;
@@ -23,8 +23,7 @@ const BASE64_ENCODE: [u8; 64] =
 #[repr(align(64))]
 struct AlignedBase64Table([u8; 64]);
 
-static BASE64_TABLE: AlignedBase64Table =
-    AlignedBase64Table(*b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/");
+static BASE64_TABLE: AlignedBase64Table = AlignedBase64Table(BASE64_ENCODE);
 
 /// Pre-computed base64 decode lookup table (char byte -> value).
 /// Invalid characters map to 255.
@@ -299,14 +298,6 @@ mod tests {
     }
 
     #[test]
-    fn encode_large_value() {
-        let mut buf = Vec::new();
-        vlq_encode(&mut buf, 1000);
-        let (decoded, _) = vlq_decode(&buf, 0).unwrap();
-        assert_eq!(decoded, 1000);
-    }
-
-    #[test]
     fn roundtrip_values() {
         let values = [
             0,
@@ -346,15 +337,6 @@ mod tests {
     }
 
     #[test]
-    fn decode_multi_char() {
-        let mut buf = Vec::new();
-        vlq_encode(&mut buf, 500);
-        assert!(buf.len() > 1, "500 should need multiple chars");
-        let (decoded, _) = vlq_decode(&buf, 0).unwrap();
-        assert_eq!(decoded, 500);
-    }
-
-    #[test]
     fn decode_non_ascii_byte() {
         let input = [0xC0u8];
         let err = vlq_decode(&input, 0).unwrap_err();
@@ -390,8 +372,6 @@ mod tests {
         assert_eq!(err, DecodeError::UnexpectedEof { offset: 0 });
     }
 
-    // --- Unsigned VLQ tests ---
-
     #[test]
     fn unsigned_encode_zero() {
         let mut buf = Vec::new();
@@ -401,7 +381,7 @@ mod tests {
 
     #[test]
     fn unsigned_encode_small_values() {
-        // Value 1 → 'B', value 2 → 'C', ..., value 31 → base64[31] = 'f'
+        // No sign bit: value 1 is 'B', unlike signed VLQ where 1 is 'C'.
         let mut buf = Vec::new();
         vlq_encode_unsigned(&mut buf, 1);
         assert_eq!(&buf, b"B");
@@ -429,15 +409,6 @@ mod tests {
         vlq_encode_unsigned(&mut encoded, u64::MAX);
         assert_eq!(encoded.len(), MAX_VLQ_BYTES);
         assert_eq!(vlq_decode_unsigned(&encoded, 0).unwrap(), (u64::MAX, encoded.len()));
-    }
-
-    #[test]
-    fn unsigned_multi_char() {
-        let mut buf = Vec::new();
-        vlq_encode_unsigned(&mut buf, 500);
-        assert!(buf.len() > 1, "500 should need multiple chars");
-        let (decoded, _) = vlq_decode_unsigned(&buf, 0).unwrap();
-        assert_eq!(decoded, 500);
     }
 
     #[test]

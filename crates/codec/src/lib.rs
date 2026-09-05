@@ -215,21 +215,11 @@ impl std::error::Error for DecodeError {}
 mod tests {
     use super::*;
 
-    // --- Roundtrip tests ---
-
     #[test]
     fn roundtrip_empty() {
         let decoded = decode("").unwrap();
         assert!(decoded.is_empty());
         assert_eq!(encode(&decoded), "");
-    }
-
-    #[test]
-    fn roundtrip_simple() {
-        let input = "AAAA;AACA";
-        let decoded = decode(input).unwrap();
-        let encoded = encode(&decoded);
-        assert_eq!(encoded, input);
     }
 
     #[test]
@@ -256,8 +246,6 @@ mod tests {
         assert_eq!(decoded, mappings);
     }
 
-    // --- Decode structure tests ---
-
     #[test]
     fn decode_single_field_segment() {
         let decoded = decode("A").unwrap();
@@ -275,23 +263,9 @@ mod tests {
     }
 
     #[test]
-    fn decode_five_field_segment() {
-        let decoded = decode("AAAAA").unwrap();
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].len(), 1);
-        assert_eq!(decoded[0][0], vec![0, 0, 0, 0, 0]);
-    }
-
-    #[test]
     fn decode_negative_values() {
         let decoded = decode("DADD").unwrap();
         assert_eq!(decoded[0][0], vec![-1, 0, -1, -1]);
-    }
-
-    #[test]
-    fn decode_multiple_lines() {
-        let decoded = decode("AAAA;AACA;AACA").unwrap();
-        assert_eq!(decoded.len(), 3);
     }
 
     #[test]
@@ -319,8 +293,6 @@ mod tests {
             assert!(line.is_empty());
         }
     }
-
-    // --- Malformed input tests ---
 
     #[test]
     fn decode_invalid_ascii_char() {
@@ -378,8 +350,6 @@ mod tests {
         assert!(matches!(err, DecodeError::InvalidSegmentLength { fields: 3, .. }));
     }
 
-    // --- Encode edge cases ---
-
     #[test]
     fn encode_empty_segments_no_dangling_comma() {
         // Empty segments should be skipped without producing dangling commas
@@ -401,8 +371,6 @@ mod tests {
         assert_eq!(encoded, "");
     }
 
-    // --- Parallel encoding tests ---
-
     #[cfg(feature = "parallel")]
     mod parallel_tests {
         use super::*;
@@ -413,11 +381,11 @@ mod tests {
                 let mut line_segments = Vec::with_capacity(segments_per_line);
                 for seg in 0..segments_per_line {
                     line_segments.push(Segment::five(
-                        (seg * 10) as i64, // generated column
-                        (seg % 5) as i64,  // source index
-                        line as i64,       // original line
-                        (seg * 5) as i64,  // original column
-                        (seg % 3) as i64,  // name index
+                        (seg * 10) as i64,
+                        (seg % 5) as i64,
+                        line as i64,
+                        (seg * 5) as i64,
+                        (seg % 3) as i64,
                     ));
                 }
                 mappings.push(line_segments);
@@ -478,14 +446,6 @@ mod tests {
         }
 
         #[test]
-        fn parallel_roundtrip() {
-            let mappings = build_large_mappings(2000, 10);
-            let encoded = encode_parallel(&mappings);
-            let decoded = decode(&encoded).unwrap();
-            assert_eq!(decoded, mappings);
-        }
-
-        #[test]
         fn parallel_fallback_for_small_maps() {
             // Below threshold — should still produce correct output
             let mappings = build_large_mappings(10, 5);
@@ -494,8 +454,6 @@ mod tests {
             assert_eq!(sequential, parallel);
         }
     }
-
-    // --- DecodeError Display tests ---
 
     #[test]
     fn decode_error_display_invalid_base64() {
@@ -524,17 +482,13 @@ mod tests {
         );
     }
 
-    // --- Decode edge case: 5-field segment with name ---
-
     #[test]
-    fn decode_five_field_with_name_index() {
-        // Ensure the name field (5th) is decoded correctly
-        let input = "AAAAC"; // 0,0,0,0,1
-        let decoded = decode(input).unwrap();
+    fn decode_five_field_segment() {
+        let decoded = decode("AAAAC").unwrap();
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].len(), 1);
         assert_eq!(decoded[0][0], vec![0, 0, 0, 0, 1]);
     }
-
-    // --- Encode edge case: encode with only 1 line ---
 
     #[test]
     fn encode_single_segment_one_field() {

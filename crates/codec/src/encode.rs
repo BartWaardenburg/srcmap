@@ -17,7 +17,6 @@ pub fn encode(mappings: &SourceMapMappings) -> String {
     let segment_count: usize = mappings.iter().map(|line| line.len()).sum();
     let mut buf: Vec<u8> = Vec::with_capacity(segment_count * MAX_VLQ_BYTES * 5 + mappings.len());
 
-    // Cumulative state
     let mut prev_source: i64 = 0;
     let mut prev_original_line: i64 = 0;
     let mut prev_original_column: i64 = 0;
@@ -52,25 +51,20 @@ pub fn encode(mappings: &SourceMapMappings) -> String {
             buf.reserve(field_count * MAX_VLQ_BYTES);
             // SAFETY: the exact number of fields for this segment was reserved immediately above.
             unsafe {
-                // Field 1: generated column (delta from previous in this line)
                 vlq_encode_unchecked(&mut buf, segment[0] - prev_generated_column);
                 prev_generated_column = segment[0];
 
                 if segment.len() >= 4 {
-                    // Field 2: source index (cumulative delta)
                     vlq_encode_unchecked(&mut buf, segment[1] - prev_source);
                     prev_source = segment[1];
 
-                    // Field 3: original line (cumulative delta)
                     vlq_encode_unchecked(&mut buf, segment[2] - prev_original_line);
                     prev_original_line = segment[2];
 
-                    // Field 4: original column (cumulative delta)
                     vlq_encode_unchecked(&mut buf, segment[3] - prev_original_column);
                     prev_original_column = segment[3];
 
                     if segment.len() >= 5 {
-                        // Field 5: name index (cumulative delta)
                         vlq_encode_unchecked(&mut buf, segment[4] - prev_name);
                         prev_name = segment[4];
                     }
