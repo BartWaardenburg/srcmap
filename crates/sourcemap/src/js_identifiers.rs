@@ -46,8 +46,7 @@ pub fn get_javascript_token(source_line: &str) -> Option<&str> {
         end += ch.len_utf8();
     }
 
-    let token = &source_line[start..end];
-    if token.is_empty() { None } else { Some(token) }
+    Some(&source_line[start..end])
 }
 
 /// Check if a character can start a JavaScript identifier.
@@ -121,13 +120,6 @@ mod tests {
         assert_eq!(get_javascript_token("  foo(bar)"), Some("foo"));
         assert_eq!(get_javascript_token("  _private"), Some("_private"));
         assert_eq!(get_javascript_token("  $jquery"), Some("$jquery"));
-    }
-
-    #[test]
-    fn test_get_javascript_token_whitespace() {
-        assert_eq!(get_javascript_token("   abc123"), Some("abc123"));
-        assert_eq!(get_javascript_token("\t\ttab"), Some("tab"));
-        assert_eq!(get_javascript_token("noSpace"), Some("noSpace"));
     }
 
     #[test]

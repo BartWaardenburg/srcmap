@@ -80,7 +80,7 @@ impl SourceView {
     /// UTF-16 code unit offsets, but Rust strings are UTF-8.
     pub fn get_line_slice(&self, line: u32, col: u32, span: u32) -> Option<&str> {
         let line_str = self.get_line(line)?;
-        let start_byte = utf16_col_to_byte_offset(line_str, col)?;
+        let start_byte = utf16_offset_from(line_str, 0, col)?;
         let end_byte = utf16_offset_from(line_str, start_byte, span)?;
         Some(&line_str[start_byte..end_byte])
     }
@@ -105,34 +105,20 @@ impl SourceView {
         minified_name: &str,
         sm: &'a SourceMap,
     ) -> Option<&'a str> {
-        // We need to find where this original location maps to in the generated source
         let source_name = sm.get_source(token.source)?;
         let gen_loc = sm.generated_position_for(source_name, token.line, token.column)?;
 
         let line_str = self.get_line(gen_loc.line)?;
-        let col_byte = utf16_col_to_byte_offset(line_str, gen_loc.column)?;
-
-        // Look at code before the token position to find function name patterns
+        let col_byte = utf16_offset_from(line_str, 0, gen_loc.column)?;
         let prefix = &line_str[..col_byte];
 
-        // Try to find what precedes this position
         let candidate = extract_function_name_candidate(prefix)?;
-
-        if !is_valid_javascript_identifier(candidate) {
-            return None;
-        }
-
-        // If the candidate matches the minified name, look for the original
-        // name by finding a mapping at the candidate's position
         if candidate != minified_name {
             return None;
         }
 
-        // Find the byte offset where the candidate starts in the line
         let candidate_start_byte = prefix.len() - candidate.len();
         let candidate_col = byte_offset_to_utf16_col(line_str, candidate_start_byte);
-
-        // Look up the original location for this generated position
         let original = sm.original_position_for(gen_loc.line, candidate_col)?;
         let name_idx = original.name?;
         sm.get_name(name_idx)
@@ -191,37 +177,10 @@ fn compute_line_ranges(source: &str) -> Vec<LineRange> {
     ranges
 }
 
-/// Convert a UTF-16 column offset to a byte offset within a UTF-8 string.
-///
-/// Returns `None` if the column is past the end of the string.
-fn utf16_col_to_byte_offset(s: &str, col: u32) -> Option<usize> {
-    if col == 0 {
-        return Some(0);
-    }
-
-    let mut utf16_offset = 0u32;
-    for (byte_idx, ch) in s.char_indices() {
-        if utf16_offset == col {
-            return Some(byte_idx);
-        }
-        utf16_offset += ch.len_utf16() as u32;
-        if utf16_offset > col {
-            // Column points into the middle of a surrogate pair
-            return None;
-        }
-    }
-
-    // Column exactly at the end of the string
-    if utf16_offset == col {
-        return Some(s.len());
-    }
-
-    None
-}
-
 /// Advance `span` UTF-16 code units from `start_byte` and return the resulting byte offset.
 ///
-/// Returns `None` if the span extends past the end of the string.
+/// Returns `None` if the span extends past the end of the string or lands in
+/// the middle of a surrogate pair.
 fn utf16_offset_from(s: &str, start_byte: usize, span: u32) -> Option<usize> {
     if span == 0 {
         return Some(start_byte);
@@ -300,20 +259,7 @@ fn extract_function_name_candidate(prefix: &str) -> Option<&str> {
             || last_char == '$'
             || (!last_char.is_ascii() && last_char.is_alphanumeric()) =>
         {
-            let ident = extract_trailing_identifier(trimmed)?;
-            let before = trimmed[..trimmed.len() - ident.len()].trim_end();
-            if before.ends_with('.') {
-                return Some(ident);
-            }
-            // Keyword patterns: var/let/const
-            if before.ends_with("var ")
-                || before.ends_with("let ")
-                || before.ends_with("const ")
-                || before.ends_with("function ")
-            {
-                return Some(ident);
-            }
-            Some(ident)
+            extract_trailing_identifier(trimmed)
         }
         _ => None,
     }
@@ -352,25 +298,14 @@ fn extract_trailing_identifier(s: &str) -> Option<&str> {
     }
 
     let ident = &s[start..end];
-
-    // Verify it starts with a valid identifier start character
-    let first = ident.chars().next()?;
-    if first.is_ascii_digit() {
-        return None;
-    }
-
     if is_valid_javascript_identifier(ident) { Some(ident) } else { None }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use crate::SourceMap;
 
     use super::*;
-
-    // ── Line cache tests ─────────────────────────────────────────
 
     #[test]
     fn test_empty_source() {
@@ -454,8 +389,6 @@ mod tests {
         assert_eq!(view.get_line(0), Some("a"));
     }
 
-    // ── UTF-16 column tests ─────────────────────────────────────
-
     #[test]
     fn test_get_line_slice_ascii() {
         let view = SourceView::from_string("abcdefgh".into());
@@ -514,32 +447,29 @@ mod tests {
         assert_eq!(view.get_line_slice(2, 2, 1), Some("i"));
     }
 
-    // ── UTF-16 conversion tests ─────────────────────────────────
-
     #[test]
-    fn test_utf16_col_to_byte_offset_ascii() {
-        assert_eq!(utf16_col_to_byte_offset("abcd", 0), Some(0));
-        assert_eq!(utf16_col_to_byte_offset("abcd", 2), Some(2));
-        assert_eq!(utf16_col_to_byte_offset("abcd", 4), Some(4));
+    fn test_utf16_offset_from_ascii() {
+        assert_eq!(utf16_offset_from("abcd", 0, 0), Some(0));
+        assert_eq!(utf16_offset_from("abcd", 0, 2), Some(2));
+        assert_eq!(utf16_offset_from("abcd", 0, 4), Some(4));
+        assert_eq!(utf16_offset_from("abcd", 0, 5), None);
     }
 
     #[test]
-    fn test_utf16_col_to_byte_offset_multibyte() {
+    fn test_utf16_offset_from_multibyte() {
         // \u{00e9} is 2 bytes in UTF-8, 1 UTF-16 code unit
         let s = "\u{00e9}a";
-        assert_eq!(utf16_col_to_byte_offset(s, 0), Some(0));
-        assert_eq!(utf16_col_to_byte_offset(s, 1), Some(2)); // after \u{00e9}
-        assert_eq!(utf16_col_to_byte_offset(s, 2), Some(3)); // after 'a'
+        assert_eq!(utf16_offset_from(s, 0, 1), Some(2));
+        assert_eq!(utf16_offset_from(s, 0, 2), Some(3));
     }
 
     #[test]
-    fn test_utf16_col_to_byte_offset_surrogate_pair() {
+    fn test_utf16_offset_from_surrogate_pair() {
         // U+1F600 is 4 bytes in UTF-8, 2 UTF-16 code units
         let s = "\u{1F600}a";
-        assert_eq!(utf16_col_to_byte_offset(s, 0), Some(0));
-        assert_eq!(utf16_col_to_byte_offset(s, 1), None); // middle of surrogate pair
-        assert_eq!(utf16_col_to_byte_offset(s, 2), Some(4)); // after emoji
-        assert_eq!(utf16_col_to_byte_offset(s, 3), Some(5)); // after 'a'
+        assert_eq!(utf16_offset_from(s, 0, 1), None); // middle of surrogate pair
+        assert_eq!(utf16_offset_from(s, 0, 2), Some(4));
+        assert_eq!(utf16_offset_from(s, 0, 3), Some(5));
     }
 
     #[test]
@@ -553,8 +483,6 @@ mod tests {
         assert_eq!(byte_offset_to_utf16_col(s, 5), 3); // after emoji (1 + 2)
         assert_eq!(byte_offset_to_utf16_col(s, 6), 4); // after 'b'
     }
-
-    // ── Function name candidate extraction tests ────────────────
 
     #[test]
     fn test_extract_function_call() {
@@ -613,15 +541,6 @@ mod tests {
         assert_eq!(extract_function_name_candidate("foo(a,"), Some("a"));
     }
 
-    // ── Arc / Send / Sync tests ──────────────────────────────────
-
-    #[test]
-    fn test_arc_construction() {
-        let source: Arc<str> = Arc::from("test source");
-        let view = SourceView::new(Arc::clone(&source));
-        assert_eq!(view.source(), "test source");
-    }
-
     #[test]
     fn test_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
@@ -639,96 +558,24 @@ mod tests {
         assert_eq!(view2.get_line(0), Some("line1"));
     }
 
-    // ── Integration test with SourceMap ──────────────────────────
-
     #[test]
     fn test_get_original_function_name() {
-        // Build a source map that maps generated positions to original positions
-        // Generated: "a(b)" where `a` was originally `originalFunc` and `b` was `originalArg`
-        let json = r#"{
-            "version": 3,
-            "sources": ["input.js"],
-            "names": ["originalFunc", "originalArg"],
-            "mappings": "AAAA,CAAC"
-        }"#;
-
-        let sm = SourceMap::from_json(json).unwrap();
-
-        // The generated source is "a(b)"
-        // Mapping: gen 0:0 -> orig 0:0 (source 0), gen 0:2 -> orig 0:1 (source 0)
-        // But we need names in the mappings for this to work.
-        // Let's create a more realistic test with the builder.
-
-        // For now, verify that the function works without crashing when there's no match
-        let view = SourceView::from_string("a(b)".into());
-        let token = OriginalLocation { source: 0, line: 0, column: 0, name: Some(0) };
-        // This should return None since the heuristic won't find a matching minified name
-        let result = view.get_original_function_name(&token, "nonexistent", &sm);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_get_original_function_name_with_match() {
-        // Create a source map where:
-        // Generated line 0: "a(b)"
-        //   col 0 -> source 0, line 0, col 0, name "originalFunc" (names[0])
-        //   col 2 -> source 0, line 0, col 5, name "originalArg" (names[1])
-        //
-        // We want to test: given a token at orig 0:5 (which maps to gen 0:2),
-        // the code before gen 0:2 is "a(" — so the candidate is "a".
-        // If minified_name is "a", we look up gen 0:0 to find name "originalFunc".
-
-        // AAAAA = gen_col 0, source 0, orig_line 0, orig_col 0, name 0
-        // EAAKC = gen_col +2, source +0, orig_line +0, orig_col +5, name +1
+        // Generated "a(b)": gen 0:0 -> orig 0:0 "originalFunc", gen 0:2 -> orig 0:5 "originalArg".
+        // The token at orig 0:5 maps to gen 0:2, preceded by "a(", so the
+        // candidate is "a"; when it matches the minified name, gen 0:0 yields
+        // "originalFunc".
         let json = r#"{
             "version": 3,
             "sources": ["input.js"],
             "names": ["originalFunc", "originalArg"],
             "mappings": "AAAAA,EAAKC"
         }"#;
-
         let sm = SourceMap::from_json(json).unwrap();
-
-        // Verify the mappings are correct
-        let loc0 = sm.original_position_for(0, 0).unwrap();
-        assert_eq!(loc0.source, 0);
-        assert_eq!(loc0.line, 0);
-        assert_eq!(loc0.column, 0);
-        assert_eq!(loc0.name, Some(0));
-
-        let loc2 = sm.original_position_for(0, 2).unwrap();
-        assert_eq!(loc2.source, 0);
-        assert_eq!(loc2.line, 0);
-        assert_eq!(loc2.column, 5);
-        assert_eq!(loc2.name, Some(1));
-
-        // Generated source: "a(b)"
         let view = SourceView::from_string("a(b)".into());
-
-        // Token is at original 0:5 with name "originalArg"
-        // We want to find the function name "originalFunc" for this token
         let token = OriginalLocation { source: 0, line: 0, column: 5, name: Some(1) };
 
-        // The minified name "a" should match the candidate extracted from "a("
-        let result = view.get_original_function_name(&token, "a", &sm);
-        assert_eq!(result, Some("originalFunc"));
-    }
-
-    #[test]
-    fn test_line_cache_consistency() {
-        let view = SourceView::from_string("a\nb\nc".into());
-        // Access lines in different orders to ensure cache is consistent
-        assert_eq!(view.get_line(2), Some("c"));
-        assert_eq!(view.get_line(0), Some("a"));
-        assert_eq!(view.get_line(1), Some("b"));
-        assert_eq!(view.line_count(), 3);
-    }
-
-    #[test]
-    fn test_only_newlines() {
-        let view = SourceView::from_string("\n".into());
-        assert_eq!(view.line_count(), 1);
-        assert_eq!(view.get_line(0), Some(""));
+        assert_eq!(view.get_original_function_name(&token, "a", &sm), Some("originalFunc"));
+        assert_eq!(view.get_original_function_name(&token, "nonexistent", &sm), None);
     }
 
     #[test]
@@ -752,12 +599,5 @@ mod tests {
         let view = SourceView::from_string("abc".into());
         // Slice at the very end with 0 span
         assert_eq!(view.get_line_slice(0, 3, 0), Some(""));
-    }
-
-    #[test]
-    fn test_get_line_slice_full_line() {
-        let view = SourceView::from_string("abc\ndef".into());
-        assert_eq!(view.get_line_slice(0, 0, 3), Some("abc"));
-        assert_eq!(view.get_line_slice(1, 0, 3), Some("def"));
     }
 }

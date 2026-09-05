@@ -86,13 +86,13 @@ fn parse_with_serde_json_minimal(json: &str) -> SourceMap {
     build_sourcemap_from_minimal(raw)
 }
 
-fn generate_sourcemap_json(lines: usize, segs_per_line: usize, num_sources: usize) -> String {
-    let sources: Vec<String> = (0..num_sources).map(|i| format!("src/file{i}.js")).collect();
-    let names: Vec<String> = (0..20).map(|i| format!("var{i}")).collect();
-    let sources_content: Vec<String> = (0..num_sources)
-        .map(|i| format!("// source file {i}\n{}", "const x = 1;\n".repeat(lines)))
-        .collect();
+const NAME_COUNT: usize = 20;
 
+fn json_string_array(values: &[String]) -> String {
+    values.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(",")
+}
+
+fn generate_mappings(lines: usize, segs_per_line: usize, num_sources: usize) -> String {
     let mut mappings_parts: Vec<Vec<Segment>> = Vec::with_capacity(lines);
     let mut src: i64 = 0;
     let mut src_line: i64 = 0;
@@ -112,7 +112,7 @@ fn generate_sourcemap_json(lines: usize, segs_per_line: usize, num_sources: usiz
             src_col = (s as i64 * 5 + 1) % 30;
 
             if s % 4 == 0 {
-                name = (name + 1) % names.len() as i64;
+                name = (name + 1) % NAME_COUNT as i64;
                 line_parts.push(Segment::five(gen_col, src, src_line, src_col, name));
             } else {
                 line_parts.push(Segment::four(gen_col, src, src_line, src_col));
@@ -121,18 +121,26 @@ fn generate_sourcemap_json(lines: usize, segs_per_line: usize, num_sources: usiz
         mappings_parts.push(line_parts);
     }
 
-    let encoded = srcmap_codec::encode(&mappings_parts);
+    srcmap_codec::encode(&mappings_parts)
+}
+
+fn generate_sourcemap_json(lines: usize, segs_per_line: usize, num_sources: usize) -> String {
+    let sources: Vec<String> = (0..num_sources).map(|i| format!("src/file{i}.js")).collect();
+    let names: Vec<String> = (0..NAME_COUNT).map(|i| format!("var{i}")).collect();
+    let sources_content: Vec<String> = (0..num_sources)
+        .map(|i| format!("// source file {i}\n{}", "const x = 1;\n".repeat(lines)))
+        .collect();
 
     format!(
         r#"{{"version":3,"sources":[{}],"sourcesContent":[{}],"names":[{}],"mappings":"{}"}}"#,
-        sources.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(","),
+        json_string_array(&sources),
         sources_content
             .iter()
             .map(|s| serde_json::to_string(s).unwrap())
             .collect::<Vec<_>>()
             .join(","),
-        names.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(","),
-        encoded,
+        json_string_array(&names),
+        generate_mappings(lines, segs_per_line, num_sources),
     )
 }
 
@@ -142,43 +150,13 @@ fn generate_sourcemap_json_no_content(
     num_sources: usize,
 ) -> String {
     let sources: Vec<String> = (0..num_sources).map(|i| format!("src/file{i}.js")).collect();
-    let names: Vec<String> = (0..20).map(|i| format!("var{i}")).collect();
-
-    let mut mappings_parts: Vec<Vec<Segment>> = Vec::with_capacity(lines);
-    let mut src: i64 = 0;
-    let mut src_line: i64 = 0;
-    let mut src_col: i64;
-    let mut name: i64 = 0;
-
-    for _ in 0..lines {
-        let mut gen_col: i64 = 0;
-        let mut line_parts = Vec::with_capacity(segs_per_line);
-
-        for s in 0..segs_per_line {
-            gen_col += 2 + (s as i64 * 3) % 20;
-            if s % 7 == 0 {
-                src = (src + 1) % num_sources as i64;
-            }
-            src_line += 1;
-            src_col = (s as i64 * 5 + 1) % 30;
-
-            if s % 4 == 0 {
-                name = (name + 1) % names.len() as i64;
-                line_parts.push(Segment::five(gen_col, src, src_line, src_col, name));
-            } else {
-                line_parts.push(Segment::four(gen_col, src, src_line, src_col));
-            }
-        }
-        mappings_parts.push(line_parts);
-    }
-
-    let encoded = srcmap_codec::encode(&mappings_parts);
+    let names: Vec<String> = (0..NAME_COUNT).map(|i| format!("var{i}")).collect();
 
     format!(
         r#"{{"version":3,"sources":[{}],"names":[{}],"mappings":"{}"}}"#,
-        sources.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(","),
-        names.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(","),
-        encoded,
+        json_string_array(&sources),
+        json_string_array(&names),
+        generate_mappings(lines, segs_per_line, num_sources),
     )
 }
 

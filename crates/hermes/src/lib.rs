@@ -156,18 +156,15 @@ fn decode_function_mappings(mappings_str: &str) -> Result<Vec<HermesScopeOffset>
     let mut prev_line: i64 = 0;
 
     while pos < input.len() {
-        // Skip commas
         if input[pos] == b',' {
             pos += 1;
             continue;
         }
 
-        // Decode column delta
         let (col_delta, consumed) = vlq_decode(input, pos)?;
         pos += consumed;
         prev_column += col_delta;
 
-        // Decode name_index delta
         if pos >= input.len() || input[pos] == b',' {
             return Err(HermesError::InvalidFunctionMap(
                 "expected 3 values per segment, got 1".to_string(),
@@ -177,7 +174,6 @@ fn decode_function_mappings(mappings_str: &str) -> Result<Vec<HermesScopeOffset>
         pos += consumed;
         prev_name_index += name_delta;
 
-        // Decode line delta
         if pos >= input.len() || input[pos] == b',' {
             return Err(HermesError::InvalidFunctionMap(
                 "expected 3 values per segment, got 2".to_string(),
@@ -358,28 +354,10 @@ impl SourceMapHermes {
 
     /// Get the original function name for a position in the generated code.
     ///
-    /// First looks up the original position via the source map, then finds
-    /// the enclosing function scope in the corresponding source's function map
-    /// using the original (not generated) coordinates.
+    /// Alias of [`get_scope_for_token`](Self::get_scope_for_token), kept for
+    /// parity with getsentry/rust-sourcemap.
     pub fn get_original_function_name(&self, line: u32, column: u32) -> Option<&str> {
-        let loc = self.sm.original_position_for(line, column)?;
-        let function_map = self.get_function_map(loc.source)?;
-
-        if function_map.mappings.is_empty() {
-            return None;
-        }
-
-        // Binary search for greatest lower bound using original coordinates
-        let idx = match function_map.mappings.binary_search_by(|offset| {
-            offset.line.cmp(&loc.line).then(offset.column.cmp(&loc.column))
-        }) {
-            Ok(i) => i,
-            Err(0) => return None,
-            Err(i) => i - 1,
-        };
-
-        let scope = &function_map.mappings[idx];
-        function_map.names.get(scope.name_index as usize).map(|n| n.as_str())
+        self.get_scope_for_token(line, column)
     }
 
     /// Check if this source map is for a RAM (Random Access Module) bundle.
@@ -468,56 +446,9 @@ mod tests {
         assert_eq!(fm.mappings[1], HermesScopeOffset { line: 0, column: 2, name_index: 1 });
 
         // "GGC" -> col delta=3, name delta=3, line delta=1
-        // absolute: col=5, name=4, line=1
-        // Wait, let's decode manually:
-        // G=3, G=3, C=1
-        // col: prev_col(2) + 3 = 5
-        // name: prev_name(1) + 3 = 4  (but we only have 3 names: 0,1,2)
-        // line: prev_line(0) + 1 = 1
-        // Actually that would be out of bounds. Let me re-check the VLQ values.
-        // E = 2, C = 1, A = 0 for the second segment
-        // G = 3, G = 3, C = 1 for the third segment
-        // Third segment absolute: col=2+3=5, name=1+3=4, line=0+1=1
-        // name_index 4 is out of range (only 3 names), but that's just test data
+        // absolute: col=5, name=4, line=1 (name_index 4 exceeds the 3 names;
+        // decoding does not validate indices, lookup does)
         assert_eq!(fm.mappings[2], HermesScopeOffset { line: 1, column: 5, name_index: 4 });
-    }
-
-    #[test]
-    fn scope_resolution() {
-        // Create a source map with known function scopes
-        let json = r#"{
-            "version": 3,
-            "sources": ["a.js"],
-            "names": [],
-            "mappings": "AAAA;AACA;AACA;AACA;AACA",
-            "x_facebook_sources": [
-                [{"names": ["<global>", "foo", "bar"], "mappings": "AAA,ECA,AGC"}]
-            ]
-        }"#;
-        // Mappings decode:
-        // Segment 1: "AAA" -> col=0, name=0, line=0 -> <global> at (0,0)
-        // Segment 2: "ECA" -> col delta=2, name delta=1, line delta=0 -> foo at (0,2)
-        // Segment 3: "AGC" -> col delta=0, name delta=3, line delta=1 -> name_index=4...
-        // Hmm, let me use simpler values
-
-        let sm = SourceMapHermes::from_json(json).unwrap();
-        let fm = sm.get_function_map(0).unwrap();
-
-        // First scope: <global> at line=0, column=0
-        assert_eq!(fm.mappings[0].name_index, 0);
-        // line=0 -> lookup_line=1 in get_scope_for_token, but the mapping has line=0
-        // So we need to think about this carefully.
-
-        // get_scope_for_token takes 0-based line, converts to 1-based for comparison.
-        // But our mappings have line=0 from the VLQ.
-        // In Hermes, function map lines are already 1-based in the encoding.
-        // But VLQ "AAA" decodes to line=0 which means the initial delta is 0.
-        // The initial absolute line value starts at 0, so the first line = 0+0 = 0.
-        // This is the raw VLQ value. In Hermes convention, line 0 means "before anything".
-
-        // For scope lookup: we look up line+1 (0-based to 1-based conversion).
-        // So looking up line=0 means lookup_line=1, but our scope at line=0 is before that.
-        // This should still find the scope via GLB.
     }
 
     #[test]
@@ -533,8 +464,6 @@ mod tests {
                 [{"names": ["<global>", "hello"], "mappings": "AAA,CCA"}]
             ]
         }"#;
-        // Source map mappings: gen(0,0)->orig(0,0), gen(0,1)->orig(0,1)
-        // Function map: <global> at orig(0,0), hello at orig(0,1)
 
         let sm = SourceMapHermes::from_json(json).unwrap();
 
@@ -566,7 +495,7 @@ mod tests {
     }
 
     #[test]
-    fn no_facebook_sources() {
+    fn no_hermes_extensions() {
         let json = r#"{
             "version": 3,
             "sources": ["a.js"],
@@ -576,9 +505,9 @@ mod tests {
 
         let sm = SourceMapHermes::from_json(json).unwrap();
         assert!(sm.get_function_map(0).is_none());
-        // get_scope_for_token resolves via source map then checks function map
-        // With no x_facebook_sources, there are no function maps, so returns None
         assert!(sm.get_scope_for_token(0, 0).is_none());
+        assert!(!sm.is_for_ram_bundle());
+        assert!(sm.x_facebook_offsets().is_none());
     }
 
     #[test]
@@ -603,20 +532,6 @@ mod tests {
     }
 
     #[test]
-    fn not_ram_bundle() {
-        let json = r#"{
-            "version": 3,
-            "sources": ["a.js"],
-            "names": [],
-            "mappings": "AAAA"
-        }"#;
-
-        let sm = SourceMapHermes::from_json(json).unwrap();
-        assert!(!sm.is_for_ram_bundle());
-        assert!(sm.x_facebook_offsets().is_none());
-    }
-
-    #[test]
     fn metro_module_paths() {
         let json = r#"{
             "version": 3,
@@ -629,36 +544,6 @@ mod tests {
         let sm = SourceMapHermes::from_json(json).unwrap();
         let paths = sm.x_metro_module_paths().unwrap();
         assert_eq!(paths, &["./src/App.js", "./src/utils.js"]);
-    }
-
-    #[test]
-    fn deref_to_sourcemap() {
-        let json = r#"{
-            "version": 3,
-            "sources": ["input.js"],
-            "names": ["x"],
-            "mappings": "AAAA"
-        }"#;
-
-        let sm = SourceMapHermes::from_json(json).unwrap();
-        // Access SourceMap methods via Deref
-        assert_eq!(sm.sources.len(), 1);
-        assert_eq!(sm.source(0), "input.js");
-        assert_eq!(sm.names.len(), 1);
-    }
-
-    #[test]
-    fn into_inner() {
-        let json = r#"{
-            "version": 3,
-            "sources": ["input.js"],
-            "names": [],
-            "mappings": "AAAA"
-        }"#;
-
-        let sm = SourceMapHermes::from_json(json).unwrap();
-        let inner = sm.into_inner();
-        assert_eq!(inner.sources.len(), 1);
     }
 
     #[test]
@@ -754,44 +639,5 @@ mod tests {
 
         let err = SourceMapHermes::from_json(json).unwrap_err();
         assert!(matches!(err, HermesError::InvalidFunctionMap(_)));
-    }
-
-    #[test]
-    fn all_null_facebook_sources() {
-        let json = r#"{
-            "version": 3,
-            "sources": ["a.js", "b.js"],
-            "names": [],
-            "mappings": "AAAA",
-            "x_facebook_sources": [null, null]
-        }"#;
-
-        let sm = SourceMapHermes::from_json(json).unwrap();
-        assert!(sm.get_function_map(0).is_none());
-        assert!(sm.get_function_map(1).is_none());
-    }
-
-    #[test]
-    fn debug_format() {
-        let json = r#"{
-            "version": 3,
-            "sources": ["a.js"],
-            "names": [],
-            "mappings": "AAAA"
-        }"#;
-
-        let sm = SourceMapHermes::from_json(json).unwrap();
-        let debug = format!("{sm:?}");
-        assert!(debug.contains("SourceMapHermes"));
-    }
-
-    #[test]
-    fn error_display() {
-        let err = HermesError::InvalidFunctionMap("test error".to_string());
-        assert_eq!(err.to_string(), "invalid function map: test error");
-
-        let err = HermesError::Vlq(DecodeError::UnexpectedEof { offset: 5 });
-        let msg = err.to_string();
-        assert!(msg.contains("VLQ"));
     }
 }

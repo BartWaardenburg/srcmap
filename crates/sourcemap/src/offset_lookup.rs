@@ -121,11 +121,7 @@ impl<'a> GeneratedOffsetLookup<'a> {
             .saturating_sub(1);
         let line_start = self.line_start_bytes[line];
         let line_end = self.line_end_bytes[line];
-        let column = if offset <= line_end {
-            self.byte_offset_to_utf16_column(line_start, offset, line)?
-        } else {
-            self.byte_offset_to_utf16_column(line_start, line_end, line)?
-        };
+        let column = self.byte_offset_to_utf16_column(line_start, offset.min(line_end), line)?;
 
         Some(GeneratedLocation { line: u32::try_from(line).ok()?, column })
     }

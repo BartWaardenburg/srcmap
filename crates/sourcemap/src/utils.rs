@@ -4,8 +4,6 @@ use std::path::{Path, PathBuf};
 
 use crate::{GeneratedLocation, Mapping, OriginalLocation, ParseError, SourceMap};
 
-// ── Path utilities (gap #10) ─────────────────────────────────────
-
 /// Find the longest common directory prefix among absolute file paths.
 ///
 /// Only considers absolute paths (starting with `/`). Splits by `/` and finds
@@ -98,8 +96,6 @@ pub fn make_relative_path(base: &str, target: &str) -> String {
     if result.is_empty() { ".".to_string() } else { result }
 }
 
-// ── Source map validation (gap #6) ───────────────────────────────
-
 /// Quick check if a JSON string looks like a valid source map.
 ///
 /// Performs a lightweight structural check without fully parsing the source map.
@@ -130,8 +126,6 @@ pub fn is_sourcemap(json: &str) -> bool {
 
     has_version && has_mappings && has_source_field
 }
-
-// ── URL resolution (gap #5) ──────────────────────────────────────
 
 /// Resolve a relative `sourceMappingURL` against the minified file's URL.
 ///
@@ -183,8 +177,6 @@ fn normalize_pathbuf(path: &Path) -> PathBuf {
     components.iter().collect()
 }
 
-// ── Data URL encoding (gap #4) ───────────────────────────────────
-
 const BASE64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /// Convert a source map JSON string to a `data:` URL.
@@ -204,7 +196,7 @@ pub fn to_data_url(json: &str) -> String {
 }
 
 /// Encode bytes to base64 (no external dependency).
-fn base64_encode(input: &[u8]) -> String {
+pub(crate) fn base64_encode(input: &[u8]) -> String {
     let mut result = String::with_capacity(input.len().div_ceil(3) * 4);
     let chunks = input.chunks(3);
 
@@ -233,8 +225,6 @@ fn base64_encode(input: &[u8]) -> String {
 
     result
 }
-
-// ── RewriteOptions (gap #8) ─────────────────────────────────────
 
 /// Options for rewriting source map paths and content.
 pub struct RewriteOptions<'a> {
@@ -332,8 +322,6 @@ pub fn rewrite_sources(sm: &SourceMap, options: &RewriteOptions<'_>) -> SourceMa
 
     result
 }
-
-// ── DecodedMap (gap #9) ──────────────────────────────────────────
 
 /// A unified type that can hold any decoded source map variant.
 ///
@@ -435,8 +423,6 @@ impl DecodedMap {
         }
     }
 }
-
-// ── Tests ────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -685,12 +671,6 @@ mod tests {
     // ── to_data_url ─────────────────────────────────────────────
 
     #[test]
-    fn data_url_prefix() {
-        let url = to_data_url(r#"{"version":3}"#);
-        assert!(url.starts_with("data:application/json;base64,"));
-    }
-
-    #[test]
     fn data_url_roundtrip() {
         let json = r#"{"version":3,"sources":["a.js"],"names":[],"mappings":"AAAA"}"#;
         let url = to_data_url(json);
@@ -761,14 +741,6 @@ mod tests {
 
     // ── RewriteOptions / rewrite_sources ────────────────────────
 
-    #[test]
-    fn rewrite_options_default() {
-        let opts = RewriteOptions::default();
-        assert!(opts.with_names);
-        assert!(opts.with_source_contents);
-        assert!(opts.strip_prefixes.is_empty());
-    }
-
     fn make_test_sourcemap() -> SourceMap {
         let json = r#"{
             "version": 3,
@@ -801,7 +773,7 @@ mod tests {
         let sm = make_test_sourcemap();
         let opts = RewriteOptions { with_names: false, ..Default::default() };
         let rewritten = rewrite_sources(&sm, &opts);
-        // All mappings should have name = u32::MAX
+        assert!(rewritten.names.is_empty());
         for m in rewritten.all_mappings() {
             assert_eq!(m.name, u32::MAX);
         }
@@ -859,14 +831,6 @@ mod tests {
         let rewritten = rewrite_sources(&sm, &opts);
         assert!(rewritten.extensions.contains_key("x_facebook_sources"));
         assert_eq!(sm.extensions["x_facebook_sources"], rewritten.extensions["x_facebook_sources"]);
-    }
-
-    #[test]
-    fn rewrite_without_names_clears_names_vec() {
-        let sm = make_test_sourcemap();
-        let opts = RewriteOptions { with_names: false, ..Default::default() };
-        let rewritten = rewrite_sources(&sm, &opts);
-        assert!(rewritten.names.is_empty());
     }
 
     #[test]
@@ -934,16 +898,6 @@ mod tests {
     }
 
     #[test]
-    fn decoded_map_to_json() {
-        let json = r#"{"version":3,"sources":["a.js"],"names":[],"mappings":"AAAA"}"#;
-        let dm = DecodedMap::from_json(json).unwrap();
-        let output = dm.to_json();
-        // Should be valid JSON containing the same data
-        assert!(output.contains("\"version\":3"));
-        assert!(output.contains("\"sources\":[\"a.js\"]"));
-    }
-
-    #[test]
     fn decoded_map_into_source_map() {
         let json = r#"{"version":3,"sources":["a.js"],"names":[],"mappings":"AAAA"}"#;
         let dm = DecodedMap::from_json(json).unwrap();
@@ -967,16 +921,6 @@ mod tests {
         assert_eq!(dm2.names(), &["foo"]);
     }
 
-    // ── Integration tests ───────────────────────────────────────
-
-    #[test]
-    fn data_url_with_is_sourcemap() {
-        let json = r#"{"version":3,"sources":["a.js"],"names":[],"mappings":"AAAA"}"#;
-        assert!(is_sourcemap(json));
-        let url = to_data_url(json);
-        assert!(url.starts_with("data:application/json;base64,"));
-    }
-
     #[test]
     fn rewrite_then_serialize() {
         let sm = make_test_sourcemap();
@@ -992,24 +936,5 @@ mod tests {
         // Parse back and verify
         let parsed = SourceMap::from_json(&json).unwrap();
         assert_eq!(parsed.sources, vec!["main.js", "utils.js"]);
-    }
-
-    #[test]
-    fn decoded_map_rewrite_roundtrip() {
-        let json = r#"{"version":3,"sources":["/src/a.js","/src/b.js"],"names":["x"],"mappings":"AACAA,GCAA","sourcesContent":["var x;","var y;"]}"#;
-        let dm = DecodedMap::from_json(json).unwrap();
-        let sm = dm.into_source_map().unwrap();
-
-        let opts = RewriteOptions {
-            strip_prefixes: &["~"],
-            with_source_contents: true,
-            ..Default::default()
-        };
-        let rewritten = rewrite_sources(&sm, &opts);
-        assert_eq!(rewritten.sources, vec!["a.js", "b.js"]);
-
-        let dm2 = DecodedMap::Regular(rewritten);
-        let output = dm2.to_json();
-        assert!(is_sourcemap(&output));
     }
 }

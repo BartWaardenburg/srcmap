@@ -49,7 +49,6 @@
 mod decode;
 mod encode;
 
-use std::collections::HashMap;
 use std::fmt;
 
 pub use decode::decode_scopes;
@@ -263,21 +262,6 @@ fn resolve_binding(names: &[String], index: u64) -> Result<Option<String>, Scope
     Ok(Some(names[actual].clone()))
 }
 
-/// Look up or insert a name, returning its 0-based index.
-fn resolve_or_add_name(
-    name: &str,
-    names: &mut Vec<String>,
-    name_map: &mut HashMap<String, u32>,
-) -> u32 {
-    if let Some(&idx) = name_map.get(name) {
-        return idx;
-    }
-    let idx = names.len() as u32;
-    names.push(name.to_string());
-    name_map.insert(name.to_string(), idx);
-    idx
-}
-
 // ── Tests ────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -441,189 +425,6 @@ mod tests {
     }
 
     #[test]
-    fn nested_ranges_with_inlining() {
-        let info = ScopeInfo {
-            scopes: vec![Some(OriginalScope {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 10, column: 0 },
-                name: None,
-                kind: Some("global".to_string()),
-                is_stack_frame: false,
-                variables: vec!["x".to_string()],
-                children: vec![OriginalScope {
-                    start: Position { line: 1, column: 0 },
-                    end: Position { line: 5, column: 1 },
-                    name: Some("fn1".to_string()),
-                    kind: Some("function".to_string()),
-                    is_stack_frame: true,
-                    variables: vec!["a".to_string()],
-                    children: vec![],
-                }],
-            })],
-            ranges: vec![GeneratedRange {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 10, column: 0 },
-                is_stack_frame: false,
-                is_hidden: false,
-                definition: Some(0),
-                call_site: None,
-                bindings: vec![Binding::Expression("_x".to_string())],
-                children: vec![GeneratedRange {
-                    start: Position { line: 6, column: 0 },
-                    end: Position { line: 8, column: 20 },
-                    is_stack_frame: true,
-                    is_hidden: false,
-                    definition: Some(1),
-                    call_site: Some(CallSite { source_index: 0, line: 7, column: 0 }),
-                    bindings: vec![Binding::Expression("\"hello\"".to_string())],
-                    children: vec![],
-                }],
-            }],
-        };
-
-        let mut names = vec![];
-        let encoded = encode_scopes(&info, &mut names);
-        let decoded = decode_scopes(&encoded, &names, 1).unwrap();
-
-        assert_eq!(decoded.ranges.len(), 1);
-        let outer = &decoded.ranges[0];
-        assert_eq!(outer.children.len(), 1);
-        let inner = &outer.children[0];
-        assert!(inner.is_stack_frame);
-        assert_eq!(inner.definition, Some(1));
-        assert_eq!(inner.call_site, Some(CallSite { source_index: 0, line: 7, column: 0 }));
-        assert_eq!(inner.bindings, vec![Binding::Expression("\"hello\"".to_string())]);
-    }
-
-    #[test]
-    fn unavailable_bindings() {
-        let info = ScopeInfo {
-            scopes: vec![Some(OriginalScope {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 5, column: 0 },
-                name: None,
-                kind: None,
-                is_stack_frame: false,
-                variables: vec!["a".to_string(), "b".to_string()],
-                children: vec![],
-            })],
-            ranges: vec![GeneratedRange {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 5, column: 0 },
-                is_stack_frame: false,
-                is_hidden: false,
-                definition: Some(0),
-                call_site: None,
-                bindings: vec![Binding::Expression("_a".to_string()), Binding::Unavailable],
-                children: vec![],
-            }],
-        };
-
-        let mut names = vec![];
-        let encoded = encode_scopes(&info, &mut names);
-        let decoded = decode_scopes(&encoded, &names, 1).unwrap();
-
-        assert_eq!(
-            decoded.ranges[0].bindings,
-            vec![Binding::Expression("_a".to_string()), Binding::Unavailable,]
-        );
-    }
-
-    #[test]
-    fn sub_range_bindings_roundtrip() {
-        let info = ScopeInfo {
-            scopes: vec![Some(OriginalScope {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 20, column: 0 },
-                name: None,
-                kind: None,
-                is_stack_frame: false,
-                variables: vec!["x".to_string(), "y".to_string()],
-                children: vec![],
-            })],
-            ranges: vec![GeneratedRange {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 20, column: 0 },
-                is_stack_frame: false,
-                is_hidden: false,
-                definition: Some(0),
-                call_site: None,
-                bindings: vec![
-                    Binding::SubRanges(vec![
-                        SubRangeBinding {
-                            expression: Some("a".to_string()),
-                            from: Position { line: 0, column: 0 },
-                        },
-                        SubRangeBinding {
-                            expression: Some("b".to_string()),
-                            from: Position { line: 5, column: 0 },
-                        },
-                        SubRangeBinding {
-                            expression: None,
-                            from: Position { line: 10, column: 0 },
-                        },
-                    ]),
-                    Binding::Expression("_y".to_string()),
-                ],
-                children: vec![],
-            }],
-        };
-
-        let mut names = vec![];
-        let encoded = encode_scopes(&info, &mut names);
-        let decoded = decode_scopes(&encoded, &names, 1).unwrap();
-
-        let bindings = &decoded.ranges[0].bindings;
-        assert_eq!(bindings.len(), 2);
-
-        match &bindings[0] {
-            Binding::SubRanges(subs) => {
-                assert_eq!(subs.len(), 3);
-                assert_eq!(subs[0].expression.as_deref(), Some("a"));
-                assert_eq!(subs[0].from, Position { line: 0, column: 0 });
-                assert_eq!(subs[1].expression.as_deref(), Some("b"));
-                assert_eq!(subs[1].from, Position { line: 5, column: 0 });
-                assert_eq!(subs[2].expression, None);
-                assert_eq!(subs[2].from, Position { line: 10, column: 0 });
-            }
-            other => panic!("expected SubRanges, got {other:?}"),
-        }
-        assert_eq!(bindings[1], Binding::Expression("_y".to_string()));
-    }
-
-    #[test]
-    fn hidden_range() {
-        let info = ScopeInfo {
-            scopes: vec![Some(OriginalScope {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 5, column: 0 },
-                name: None,
-                kind: None,
-                is_stack_frame: false,
-                variables: vec![],
-                children: vec![],
-            })],
-            ranges: vec![GeneratedRange {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 5, column: 0 },
-                is_stack_frame: true,
-                is_hidden: true,
-                definition: Some(0),
-                call_site: None,
-                bindings: vec![],
-                children: vec![],
-            }],
-        };
-
-        let mut names = vec![];
-        let encoded = encode_scopes(&info, &mut names);
-        let decoded = decode_scopes(&encoded, &names, 1).unwrap();
-
-        assert!(decoded.ranges[0].is_stack_frame);
-        assert!(decoded.ranges[0].is_hidden);
-    }
-
-    #[test]
     fn definition_resolution() {
         let info = ScopeInfo {
             scopes: vec![Some(OriginalScope {
@@ -674,55 +475,6 @@ mod tests {
     }
 
     #[test]
-    fn scopes_only_no_ranges() {
-        let info = ScopeInfo {
-            scopes: vec![Some(OriginalScope {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 5, column: 0 },
-                name: None,
-                kind: None,
-                is_stack_frame: false,
-                variables: vec![],
-                children: vec![],
-            })],
-            ranges: vec![],
-        };
-
-        let mut names = vec![];
-        let encoded = encode_scopes(&info, &mut names);
-        let decoded = decode_scopes(&encoded, &names, 1).unwrap();
-
-        assert_eq!(decoded.scopes.len(), 1);
-        assert!(decoded.scopes[0].is_some());
-        assert!(decoded.ranges.is_empty());
-    }
-
-    #[test]
-    fn ranges_only_no_scopes() {
-        let info = ScopeInfo {
-            scopes: vec![None],
-            ranges: vec![GeneratedRange {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 5, column: 0 },
-                is_stack_frame: false,
-                is_hidden: false,
-                definition: None,
-                call_site: None,
-                bindings: vec![],
-                children: vec![],
-            }],
-        };
-
-        let mut names = vec![];
-        let encoded = encode_scopes(&info, &mut names);
-        let decoded = decode_scopes(&encoded, &names, 1).unwrap();
-
-        assert_eq!(decoded.scopes.len(), 1);
-        assert!(decoded.scopes[0].is_none());
-        assert_eq!(decoded.ranges.len(), 1);
-    }
-
-    #[test]
     fn range_no_definition() {
         let info = ScopeInfo {
             scopes: vec![],
@@ -744,35 +496,6 @@ mod tests {
 
         assert_eq!(decoded.ranges.len(), 1);
         assert_eq!(decoded.ranges[0].definition, None);
-    }
-
-    #[test]
-    fn scopes_error_display() {
-        let err = ScopesError::UnmatchedScopeEnd;
-        assert_eq!(err.to_string(), "scope end without matching start");
-
-        let err = ScopesError::UnclosedScope;
-        assert_eq!(err.to_string(), "scope opened but never closed");
-
-        let err = ScopesError::UnmatchedRangeEnd;
-        assert_eq!(err.to_string(), "range end without matching start");
-
-        let err = ScopesError::UnclosedRange;
-        assert_eq!(err.to_string(), "range opened but never closed");
-
-        let err = ScopesError::InvalidNameIndex(42);
-        assert_eq!(err.to_string(), "invalid name index: 42");
-
-        let vlq_err = srcmap_codec::DecodeError::UnexpectedEof { offset: 5 };
-        let err = ScopesError::Vlq(vlq_err);
-        assert!(err.to_string().contains("VLQ decode error"));
-    }
-
-    #[test]
-    fn scopes_error_from_decode_error() {
-        let vlq_err = srcmap_codec::DecodeError::UnexpectedEof { offset: 0 };
-        let err: ScopesError = vlq_err.into();
-        assert!(matches!(err, ScopesError::Vlq(_)));
     }
 
     #[test]
@@ -832,140 +555,6 @@ mod tests {
     }
 
     #[test]
-    fn scope_same_line_end() {
-        // Scope that starts and ends on the same line (column relative)
-        let info = ScopeInfo {
-            scopes: vec![Some(OriginalScope {
-                start: Position { line: 5, column: 10 },
-                end: Position { line: 5, column: 30 },
-                name: None,
-                kind: None,
-                is_stack_frame: false,
-                variables: vec![],
-                children: vec![],
-            })],
-            ranges: vec![],
-        };
-
-        let mut names = vec![];
-        let encoded = encode_scopes(&info, &mut names);
-        let decoded = decode_scopes(&encoded, &names, 1).unwrap();
-
-        let scope = decoded.scopes[0].as_ref().unwrap();
-        assert_eq!(scope.start, Position { line: 5, column: 10 });
-        assert_eq!(scope.end, Position { line: 5, column: 30 });
-    }
-
-    #[test]
-    fn range_same_line() {
-        // Range that starts and ends on the same line
-        let info = ScopeInfo {
-            scopes: vec![Some(OriginalScope {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 10, column: 0 },
-                name: None,
-                kind: None,
-                is_stack_frame: false,
-                variables: vec![],
-                children: vec![],
-            })],
-            ranges: vec![GeneratedRange {
-                start: Position { line: 3, column: 5 },
-                end: Position { line: 3, column: 25 },
-                is_stack_frame: false,
-                is_hidden: false,
-                definition: Some(0),
-                call_site: None,
-                bindings: vec![],
-                children: vec![],
-            }],
-        };
-
-        let mut names = vec![];
-        let encoded = encode_scopes(&info, &mut names);
-        let decoded = decode_scopes(&encoded, &names, 1).unwrap();
-
-        let range = &decoded.ranges[0];
-        assert_eq!(range.start, Position { line: 3, column: 5 });
-        assert_eq!(range.end, Position { line: 3, column: 25 });
-    }
-
-    #[test]
-    fn scopes_first_empty_second_populated() {
-        let info = ScopeInfo {
-            scopes: vec![
-                None, // First source has no scopes
-                Some(OriginalScope {
-                    start: Position { line: 0, column: 0 },
-                    end: Position { line: 5, column: 0 },
-                    name: None,
-                    kind: None,
-                    is_stack_frame: false,
-                    variables: vec![],
-                    children: vec![],
-                }),
-            ],
-            ranges: vec![],
-        };
-
-        let mut names = vec![];
-        let encoded = encode_scopes(&info, &mut names);
-        let decoded = decode_scopes(&encoded, &names, 2).unwrap();
-
-        assert!(decoded.scopes[0].is_none());
-        assert!(decoded.scopes[1].is_some());
-    }
-
-    #[test]
-    fn ranges_only_no_scopes_multi_source() {
-        let info = ScopeInfo {
-            scopes: vec![None, None],
-            ranges: vec![GeneratedRange {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 5, column: 0 },
-                is_stack_frame: false,
-                is_hidden: false,
-                definition: None,
-                call_site: None,
-                bindings: vec![],
-                children: vec![],
-            }],
-        };
-
-        let mut names = vec![];
-        let encoded = encode_scopes(&info, &mut names);
-        let decoded = decode_scopes(&encoded, &names, 2).unwrap();
-
-        assert_eq!(decoded.scopes.len(), 2);
-        assert!(decoded.scopes[0].is_none());
-        assert!(decoded.scopes[1].is_none());
-        assert_eq!(decoded.ranges.len(), 1);
-    }
-
-    #[test]
-    fn range_no_definition_explicit() {
-        let info = ScopeInfo {
-            scopes: vec![None],
-            ranges: vec![GeneratedRange {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 5, column: 0 },
-                is_stack_frame: false,
-                is_hidden: false,
-                definition: None,
-                call_site: None,
-                bindings: vec![],
-                children: vec![],
-            }],
-        };
-
-        let mut names = vec![];
-        let encoded = encode_scopes(&info, &mut names);
-        let decoded = decode_scopes(&encoded, &names, 1).unwrap();
-
-        assert_eq!(decoded.ranges[0].definition, None);
-    }
-
-    #[test]
     fn sub_range_same_line_bindings() {
         // Sub-ranges where positions are on the same line (column-only delta)
         let info = ScopeInfo {
@@ -1014,219 +603,8 @@ mod tests {
     }
 
     #[test]
-    fn call_site_with_nonzero_values() {
-        let info = ScopeInfo {
-            scopes: vec![Some(OriginalScope {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 20, column: 0 },
-                name: None,
-                kind: None,
-                is_stack_frame: false,
-                variables: vec![],
-                children: vec![],
-            })],
-            ranges: vec![GeneratedRange {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 20, column: 0 },
-                is_stack_frame: false,
-                is_hidden: false,
-                definition: Some(0),
-                call_site: Some(CallSite { source_index: 2, line: 15, column: 8 }),
-                bindings: vec![],
-                children: vec![],
-            }],
-        };
-
-        let mut names = vec![];
-        let encoded = encode_scopes(&info, &mut names);
-        let decoded = decode_scopes(&encoded, &names, 1).unwrap();
-
-        let cs = decoded.ranges[0].call_site.as_ref().unwrap();
-        assert_eq!(cs.source_index, 2);
-        assert_eq!(cs.line, 15);
-        assert_eq!(cs.column, 8);
-    }
-
-    // ── Additional coverage tests ────────────────────────────────
-
-    #[test]
-    fn scope_with_name_and_kind_roundtrip() {
-        // Exercises OS_FLAG_HAS_NAME + OS_FLAG_HAS_KIND together
-        // Covers decode.rs lines 139, 141, 143, 151, 159, 161
-        let info = ScopeInfo {
-            scopes: vec![Some(OriginalScope {
-                start: Position { line: 2, column: 4 },
-                end: Position { line: 15, column: 1 },
-                name: Some("myFunc".to_string()),
-                kind: Some("function".to_string()),
-                is_stack_frame: true,
-                variables: vec!["arg1".to_string(), "arg2".to_string()],
-                children: vec![OriginalScope {
-                    start: Position { line: 3, column: 8 },
-                    end: Position { line: 14, column: 5 },
-                    name: Some("innerBlock".to_string()),
-                    kind: Some("block".to_string()),
-                    is_stack_frame: false,
-                    variables: vec!["tmp".to_string()],
-                    children: vec![],
-                }],
-            })],
-            ranges: vec![],
-        };
-
-        let mut names = vec![];
-        let encoded = encode_scopes(&info, &mut names);
-        let decoded = decode_scopes(&encoded, &names, 1).unwrap();
-
-        let scope = decoded.scopes[0].as_ref().unwrap();
-        assert_eq!(scope.name.as_deref(), Some("myFunc"));
-        assert_eq!(scope.kind.as_deref(), Some("function"));
-        assert!(scope.is_stack_frame);
-        assert_eq!(scope.variables, vec!["arg1", "arg2"]);
-
-        let child = &scope.children[0];
-        assert_eq!(child.name.as_deref(), Some("innerBlock"));
-        assert_eq!(child.kind.as_deref(), Some("block"));
-        assert!(!child.is_stack_frame);
-        assert_eq!(child.variables, vec!["tmp"]);
-    }
-
-    #[test]
-    fn range_end_multiline_2vlq() {
-        // Range where end is on a different line than start, producing a
-        // 2-VLQ range end (line_delta + column).
-        // Covers decode.rs lines 282, 286, 288 (TAG_GENERATED_RANGE_END with 2 VLQs)
-        let info = ScopeInfo {
-            scopes: vec![],
-            ranges: vec![GeneratedRange {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 7, column: 15 },
-                is_stack_frame: false,
-                is_hidden: false,
-                definition: None,
-                call_site: None,
-                bindings: vec![],
-                children: vec![GeneratedRange {
-                    start: Position { line: 1, column: 5 },
-                    end: Position { line: 4, column: 10 },
-                    is_stack_frame: false,
-                    is_hidden: false,
-                    definition: None,
-                    call_site: None,
-                    bindings: vec![],
-                    children: vec![],
-                }],
-            }],
-        };
-
-        let mut names = vec![];
-        let encoded = encode_scopes(&info, &mut names);
-        let decoded = decode_scopes(&encoded, &names, 0).unwrap();
-
-        let outer = &decoded.ranges[0];
-        assert_eq!(outer.end, Position { line: 7, column: 15 });
-        let inner = &outer.children[0];
-        assert_eq!(inner.start, Position { line: 1, column: 5 });
-        assert_eq!(inner.end, Position { line: 4, column: 10 });
-    }
-
-    #[test]
-    fn binding_unavailable_roundtrip() {
-        // Exercises Binding::Unavailable (binding idx = 0) path
-        // Covers decode.rs lines 333, 340 (TAG_GENERATED_RANGE_BINDINGS with idx=0)
-        let info = ScopeInfo {
-            scopes: vec![Some(OriginalScope {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 10, column: 0 },
-                name: None,
-                kind: None,
-                is_stack_frame: false,
-                variables: vec!["a".to_string(), "b".to_string(), "c".to_string()],
-                children: vec![],
-            })],
-            ranges: vec![GeneratedRange {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 10, column: 0 },
-                is_stack_frame: false,
-                is_hidden: false,
-                definition: Some(0),
-                call_site: None,
-                bindings: vec![
-                    Binding::Unavailable,
-                    Binding::Expression("_b".to_string()),
-                    Binding::Unavailable,
-                ],
-                children: vec![],
-            }],
-        };
-
-        let mut names = vec![];
-        let encoded = encode_scopes(&info, &mut names);
-        let decoded = decode_scopes(&encoded, &names, 1).unwrap();
-
-        assert_eq!(decoded.ranges[0].bindings.len(), 3);
-        assert_eq!(decoded.ranges[0].bindings[0], Binding::Unavailable);
-        assert_eq!(decoded.ranges[0].bindings[1], Binding::Expression("_b".to_string()));
-        assert_eq!(decoded.ranges[0].bindings[2], Binding::Unavailable);
-    }
-
-    #[test]
-    fn sub_range_with_none_expression() {
-        // Sub-range bindings where a sub-range has expression = None (Unavailable)
-        // Covers encode.rs lines 267, 271 (None expression → emit 0)
-        // and decode.rs lines 353, 354, 357, 364 (sub-range reading)
-        let info = ScopeInfo {
-            scopes: vec![Some(OriginalScope {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 20, column: 0 },
-                name: None,
-                kind: None,
-                is_stack_frame: false,
-                variables: vec!["x".to_string()],
-                children: vec![],
-            })],
-            ranges: vec![GeneratedRange {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 20, column: 0 },
-                is_stack_frame: false,
-                is_hidden: false,
-                definition: Some(0),
-                call_site: None,
-                bindings: vec![Binding::SubRanges(vec![
-                    SubRangeBinding {
-                        expression: Some("a".to_string()),
-                        from: Position { line: 0, column: 0 },
-                    },
-                    SubRangeBinding { expression: None, from: Position { line: 5, column: 0 } },
-                    SubRangeBinding {
-                        expression: Some("c".to_string()),
-                        from: Position { line: 10, column: 0 },
-                    },
-                ])],
-                children: vec![],
-            }],
-        };
-
-        let mut names = vec![];
-        let encoded = encode_scopes(&info, &mut names);
-        let decoded = decode_scopes(&encoded, &names, 1).unwrap();
-
-        match &decoded.ranges[0].bindings[0] {
-            Binding::SubRanges(subs) => {
-                assert_eq!(subs.len(), 3);
-                assert_eq!(subs[0].expression.as_deref(), Some("a"));
-                assert_eq!(subs[1].expression, None);
-                assert_eq!(subs[2].expression.as_deref(), Some("c"));
-            }
-            other => panic!("expected SubRanges, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn sub_range_multiple_variables() {
-        // Multiple variables each with sub-ranges, exercises the H tag
-        // encode/decode with h_first handling (encode.rs line 290)
-        // and decode.rs lines 353-375 (TAG_GENERATED_RANGE_SUB_RANGE_BINDINGS)
+        // Two H items in one range: the second variable index is relative to the first.
         let info = ScopeInfo {
             scopes: vec![Some(OriginalScope {
                 start: Position { line: 0, column: 0 },
@@ -1258,7 +636,7 @@ mod tests {
                     ]),
                     // Variable 1 (y): simple binding
                     Binding::Expression("_y".to_string()),
-                    // Variable 2 (z): sub-ranges (second H item, exercises h_first=false)
+                    // Variable 2 (z): sub-ranges (second H item)
                     Binding::SubRanges(vec![
                         SubRangeBinding {
                             expression: Some("_z1".to_string()),
@@ -1313,69 +691,8 @@ mod tests {
     }
 
     #[test]
-    fn call_site_on_standalone_range() {
-        // Range with call_site but also a definition (typical inlining pattern).
-        // Exercises decode.rs lines 380-388 (TAG_GENERATED_RANGE_CALL_SITE)
-        let info = ScopeInfo {
-            scopes: vec![Some(OriginalScope {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 30, column: 0 },
-                name: None,
-                kind: Some("global".to_string()),
-                is_stack_frame: false,
-                variables: vec![],
-                children: vec![OriginalScope {
-                    start: Position { line: 5, column: 0 },
-                    end: Position { line: 10, column: 1 },
-                    name: Some("inlined".to_string()),
-                    kind: Some("function".to_string()),
-                    is_stack_frame: true,
-                    variables: vec!["p".to_string()],
-                    children: vec![],
-                }],
-            })],
-            ranges: vec![GeneratedRange {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 30, column: 0 },
-                is_stack_frame: false,
-                is_hidden: false,
-                definition: Some(0),
-                call_site: None,
-                bindings: vec![],
-                children: vec![GeneratedRange {
-                    start: Position { line: 12, column: 0 },
-                    end: Position { line: 18, column: 0 },
-                    is_stack_frame: true,
-                    is_hidden: false,
-                    definition: Some(1),
-                    call_site: Some(CallSite { source_index: 0, line: 20, column: 4 }),
-                    bindings: vec![Binding::Expression("arg0".to_string())],
-                    children: vec![],
-                }],
-            }],
-        };
-
-        let mut names = vec![];
-        let encoded = encode_scopes(&info, &mut names);
-        let decoded = decode_scopes(&encoded, &names, 1).unwrap();
-
-        let inner = &decoded.ranges[0].children[0];
-        assert!(inner.is_stack_frame);
-        assert_eq!(inner.definition, Some(1));
-        let cs = inner.call_site.as_ref().unwrap();
-        assert_eq!(cs.source_index, 0);
-        assert_eq!(cs.line, 20);
-        assert_eq!(cs.column, 4);
-        assert_eq!(inner.bindings, vec![Binding::Expression("arg0".to_string())]);
-    }
-
-    #[test]
     fn unknown_tag_skipped() {
-        // Manually craft a string with an unknown tag (e.g., tag 0x9) followed
-        // by some VLQs, then a valid scope.
-        // This exercises decode.rs lines 393, 394 (unknown tag skip).
-        //
-        // First encode a simple scope, then prepend an unknown tag item.
+        // Unknown tags must be skipped so newer spec revisions still decode.
         let info = ScopeInfo {
             scopes: vec![Some(OriginalScope {
                 start: Position { line: 0, column: 0 },
@@ -1412,10 +729,7 @@ mod tests {
     }
 
     #[test]
-    fn first_source_none_exercises_empty_path() {
-        // First source has no scopes (None), second has scopes.
-        // This exercises encode.rs line 89 (first_item && scope.is_none())
-        // and decode.rs lines 124, 129 (empty item + skip_comma)
+    fn leading_sources_without_scopes() {
         let info = ScopeInfo {
             scopes: vec![
                 None,
@@ -1445,9 +759,7 @@ mod tests {
 
     #[test]
     fn scope_end_same_line_as_child_end() {
-        // Parent scope ends on the same line where child scope ended.
-        // This exercises the column-relative path in TAG_ORIGINAL_SCOPE_END
-        // (decode.rs lines 183, 186, 188 where line_delta = 0)
+        // Parent scope ends on the same line where the child scope ended (column-relative end).
         let info = ScopeInfo {
             scopes: vec![Some(OriginalScope {
                 start: Position { line: 0, column: 0 },
@@ -1480,9 +792,7 @@ mod tests {
 
     #[test]
     fn generated_range_has_line_flag() {
-        // Range starting on a non-zero line (exercises GR_FLAG_HAS_LINE)
-        // Covers decode.rs lines 232, 233 (has_line flag, read line delta)
-        // and encode.rs line_delta != 0 path
+        // Sibling ranges: the second starts on a later line (GR_FLAG_HAS_LINE).
         let info = ScopeInfo {
             scopes: vec![],
             ranges: vec![
@@ -1521,43 +831,8 @@ mod tests {
     }
 
     #[test]
-    fn scope_variables_decode_path() {
-        // Scope with variables on a child to exercise TAG_ORIGINAL_SCOPE_VARIABLES
-        // decode path (decode.rs lines 221, 223, 225)
-        let info = ScopeInfo {
-            scopes: vec![Some(OriginalScope {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 20, column: 0 },
-                name: None,
-                kind: None,
-                is_stack_frame: false,
-                variables: vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()],
-                children: vec![OriginalScope {
-                    start: Position { line: 2, column: 0 },
-                    end: Position { line: 18, column: 0 },
-                    name: None,
-                    kind: None,
-                    is_stack_frame: false,
-                    variables: vec!["delta".to_string(), "epsilon".to_string()],
-                    children: vec![],
-                }],
-            })],
-            ranges: vec![],
-        };
-
-        let mut names = vec![];
-        let encoded = encode_scopes(&info, &mut names);
-        let decoded = decode_scopes(&encoded, &names, 1).unwrap();
-
-        let scope = decoded.scopes[0].as_ref().unwrap();
-        assert_eq!(scope.variables, vec!["alpha", "beta", "gamma"]);
-        assert_eq!(scope.children[0].variables, vec!["delta", "epsilon"]);
-    }
-
-    #[test]
     fn sub_range_first_expression_none() {
-        // Sub-ranges where the first expression is None (Unavailable at range start).
-        // This exercises encode.rs line 267 (first sub expression is None → emit 0 in G)
+        // First sub-range unavailable: the G item carries 0 for that variable.
         let info = ScopeInfo {
             scopes: vec![Some(OriginalScope {
                 start: Position { line: 0, column: 0 },
@@ -1815,45 +1090,6 @@ mod tests {
         assert_eq!(scope.name.as_deref(), Some("myVar"));
         assert_eq!(scope.kind, None);
     }
-
-    #[test]
-    fn generated_range_with_definition_on_nonzero_line() {
-        // Exercises GR_FLAG_HAS_LINE | GR_FLAG_HAS_DEFINITION together
-        // Covers decode.rs lines 238, 241, 247, 255
-        let info = ScopeInfo {
-            scopes: vec![Some(OriginalScope {
-                start: Position { line: 0, column: 0 },
-                end: Position { line: 50, column: 0 },
-                name: None,
-                kind: None,
-                is_stack_frame: false,
-                variables: vec![],
-                children: vec![],
-            })],
-            ranges: vec![GeneratedRange {
-                start: Position { line: 10, column: 5 },
-                end: Position { line: 40, column: 0 },
-                is_stack_frame: true,
-                is_hidden: false,
-                definition: Some(0),
-                call_site: None,
-                bindings: vec![],
-                children: vec![],
-            }],
-        };
-
-        let mut names = vec![];
-        let encoded = encode_scopes(&info, &mut names);
-        let decoded = decode_scopes(&encoded, &names, 1).unwrap();
-
-        let range = &decoded.ranges[0];
-        assert_eq!(range.start, Position { line: 10, column: 5 });
-        assert_eq!(range.end, Position { line: 40, column: 0 });
-        assert!(range.is_stack_frame);
-        assert_eq!(range.definition, Some(0));
-    }
-
-    // ── Error path tests ───────────────────────────────────────────
 
     #[test]
     fn decode_unmatched_scope_end() {

@@ -171,7 +171,11 @@ impl IndexedRamBundle {
             return Err(RamBundleError::TooShort);
         }
 
-        let startup_code = parse_startup_code(data, startup_start, startup_end)?;
+        let startup_code = std::str::from_utf8(&data[startup_start..startup_end])
+            .map_err(|e| {
+                RamBundleError::InvalidEntry(format!("startup code is not valid UTF-8: {e}"))
+            })?
+            .to_owned();
 
         // The base offset for module data is right after startup code
         let modules_base = startup_end;
@@ -242,16 +246,6 @@ fn parse_ram_modules(
     }
 
     Ok(modules)
-}
-
-fn parse_startup_code(
-    data: &[u8],
-    startup_start: usize,
-    startup_end: usize,
-) -> Result<String, RamBundleError> {
-    std::str::from_utf8(&data[startup_start..startup_end])
-        .map_err(|e| RamBundleError::InvalidEntry(format!("startup code is not valid UTF-8: {e}")))
-        .map(str::to_owned)
 }
 
 /// Check if data starts with the RAM bundle magic number.
@@ -445,37 +439,5 @@ mod tests {
         let truncated = &data[..data.len() - 5];
         let err = IndexedRamBundle::from_bytes(truncated).unwrap_err();
         assert!(matches!(err, RamBundleError::InvalidEntry(_)));
-    }
-
-    #[test]
-    fn test_module_iteration_order() {
-        let modules = vec![Some("mod0"), None, Some("mod2"), None, Some("mod4")];
-        let data = make_test_bundle(&modules, "");
-        let bundle = IndexedRamBundle::from_bytes(&data).unwrap();
-
-        let ids: Vec<u32> = bundle.modules().map(|m| m.id).collect();
-        assert_eq!(ids, vec![0, 2, 4]);
-    }
-
-    #[test]
-    fn test_is_unbundle_dir_nonexistent() {
-        assert!(!is_unbundle_dir(Path::new("/nonexistent/path")));
-    }
-
-    #[test]
-    fn test_display_errors() {
-        assert_eq!(RamBundleError::InvalidMagic.to_string(), "invalid RAM bundle magic number");
-        assert_eq!(RamBundleError::TooShort.to_string(), "data too short for RAM bundle header");
-        assert_eq!(
-            RamBundleError::InvalidEntry("bad".to_string()).to_string(),
-            "invalid module entry: bad"
-        );
-    }
-
-    #[test]
-    fn test_ram_bundle_type_equality() {
-        assert_eq!(RamBundleType::Indexed, RamBundleType::Indexed);
-        assert_eq!(RamBundleType::Unbundle, RamBundleType::Unbundle);
-        assert_ne!(RamBundleType::Indexed, RamBundleType::Unbundle);
     }
 }

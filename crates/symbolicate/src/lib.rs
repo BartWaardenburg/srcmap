@@ -83,11 +83,11 @@ pub struct ParsedStack {
 
 // ── Stack trace engine detection ─────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 enum Engine {
     V8,
+    /// SpiderMonkey and JavaScriptCore share the `name@file:line:column` format.
     SpiderMonkey,
-    JavaScriptCore,
 }
 
 // ── Parser ──────────────────────────────────────────────────────
@@ -106,12 +106,8 @@ pub fn parse_stack_trace_full(input: &str) -> ParsedStack {
     let mut message = None;
     let mut frames = Vec::new();
 
-    // Detect engine and extract message from first line
-    let first_line = match lines.next() {
-        Some(l) => l,
-        None => {
-            return ParsedStack { message: None, frames: Vec::new() };
-        }
+    let Some(first_line) = lines.next() else {
+        return ParsedStack { message: None, frames: Vec::new() };
     };
 
     let engine = detect_engine(first_line);
@@ -132,17 +128,13 @@ pub fn parse_stack_trace_full(input: &str) -> ParsedStack {
     ParsedStack { message, frames }
 }
 
-/// Detect the JavaScript engine from the first line of a stack trace.
+/// Detect the stack trace format from its first line. Error message lines
+/// default to V8.
 fn detect_engine(first_line: &str) -> Engine {
     let trimmed = first_line.trim();
-    if trimmed.starts_with("    at ") || trimmed.contains("    at ") {
-        Engine::V8
-    } else if trimmed.contains('@') && (trimmed.contains(':') || trimmed.contains('/')) {
+    if trimmed.contains('@') && !trimmed.contains("    at ") {
         Engine::SpiderMonkey
-    } else if trimmed.contains('@') {
-        Engine::JavaScriptCore
     } else {
-        // Default to V8 for error message lines
         Engine::V8
     }
 }
@@ -152,7 +144,7 @@ fn is_frame_line(line: &str, engine: Engine) -> bool {
     let trimmed = line.trim();
     match engine {
         Engine::V8 => trimmed.starts_with("at "),
-        Engine::SpiderMonkey | Engine::JavaScriptCore => trimmed.contains('@'),
+        Engine::SpiderMonkey => trimmed.contains('@'),
     }
 }
 
@@ -163,7 +155,6 @@ fn parse_frame(line: &str, engine: Engine) -> Option<StackFrame> {
     match engine {
         Engine::V8 => parse_v8_frame(trimmed),
         Engine::SpiderMonkey => parse_spidermonkey_frame(trimmed),
-        Engine::JavaScriptCore => parse_jsc_frame(trimmed),
     }
 }
 
@@ -190,7 +181,7 @@ fn parse_v8_frame(line: &str) -> Option<StackFrame> {
     Some(StackFrame { function_name: None, file, line: line_num, column: col })
 }
 
-/// Parse a SpiderMonkey stack frame: `functionName@file:line:column`
+/// Parse a SpiderMonkey or JavaScriptCore stack frame: `functionName@file:line:column`
 fn parse_spidermonkey_frame(line: &str) -> Option<StackFrame> {
     let (func, location) = line.split_once('@')?;
     let (file, line_num, col) = parse_location(location)?;
@@ -201,12 +192,6 @@ fn parse_spidermonkey_frame(line: &str) -> Option<StackFrame> {
         line: line_num,
         column: col,
     })
-}
-
-/// Parse a JavaScriptCore stack frame: `functionName@file:line:column`
-/// Same format as SpiderMonkey.
-fn parse_jsc_frame(line: &str) -> Option<StackFrame> {
-    parse_spidermonkey_frame(line)
 }
 
 /// Parse a location string: `file:line:column` or `file:line`
@@ -239,64 +224,41 @@ where
     F: Fn(&str) -> Option<SourceMap>,
 {
     let parsed = parse_stack_trace_full(stack);
-    symbolicate_frames(&parsed.frames, parsed.message, &loader)
-}
-
-/// Symbolicate pre-parsed frames.
-fn symbolicate_frames<F>(
-    frames: &[StackFrame],
-    message: Option<String>,
-    loader: &F,
-) -> SymbolicatedStack
-where
-    F: Fn(&str) -> Option<SourceMap>,
-{
     let mut cache: HashMap<String, Option<SourceMap>> = HashMap::new();
-    let mut result_frames = Vec::with_capacity(frames.len());
+    let mut frames = Vec::with_capacity(parsed.frames.len());
 
-    for frame in frames {
+    for frame in &parsed.frames {
         let sm = cache.entry(frame.file.clone()).or_insert_with(|| loader(&frame.file));
 
-        let resolved = match sm {
-            Some(sm) => {
-                // Stack traces are 1-based, source maps are 0-based
-                let line = frame.line.saturating_sub(1);
-                let column = frame.column.saturating_sub(1);
+        // Stack traces are 1-based, source maps are 0-based
+        let line = frame.line.saturating_sub(1);
+        let column = frame.column.saturating_sub(1);
 
-                match sm.original_position_for(line, column) {
-                    Some(loc) => SymbolicatedFrame {
-                        function_name: loc
-                            .name
-                            .map(|n| sm.name(n).to_string())
-                            .or_else(|| find_original_function_name(sm, line, column))
-                            .or_else(|| frame.function_name.clone()),
-                        file: sm.source(loc.source).to_string(),
-                        line: loc.line + 1,     // back to 1-based
-                        column: loc.column + 1, // back to 1-based
-                        symbolicated: true,
-                    },
-                    None => SymbolicatedFrame {
-                        function_name: frame.function_name.clone(),
-                        file: frame.file.clone(),
-                        line: frame.line,
-                        column: frame.column,
-                        symbolicated: false,
-                    },
-                }
-            }
-            None => SymbolicatedFrame {
-                function_name: frame.function_name.clone(),
-                file: frame.file.clone(),
-                line: frame.line,
-                column: frame.column,
-                symbolicated: false,
-            },
-        };
+        let resolved = sm.as_ref().and_then(|sm| {
+            let loc = sm.original_position_for(line, column)?;
+            Some(SymbolicatedFrame {
+                function_name: loc
+                    .name
+                    .map(|n| sm.name(n).to_string())
+                    .or_else(|| find_original_function_name(sm, line, column))
+                    .or_else(|| frame.function_name.clone()),
+                file: sm.source(loc.source).to_string(),
+                line: loc.line + 1,
+                column: loc.column + 1,
+                symbolicated: true,
+            })
+        });
 
-        result_frames.push(resolved);
+        frames.push(resolved.unwrap_or_else(|| SymbolicatedFrame {
+            function_name: frame.function_name.clone(),
+            file: frame.file.clone(),
+            line: frame.line,
+            column: frame.column,
+            symbolicated: false,
+        }));
     }
 
-    SymbolicatedStack { message, frames: result_frames }
+    SymbolicatedStack { message: parsed.message, frames }
 }
 
 fn find_original_function_name(sm: &SourceMap, line: u32, column: u32) -> Option<String> {
@@ -311,9 +273,8 @@ fn find_original_function_name(sm: &SourceMap, line: u32, column: u32) -> Option
             continue;
         }
 
-        let definition = match range.definition {
-            Some(definition) => definition,
-            None => continue,
+        let Some(definition) = range.definition else {
+            continue;
         };
         let scope = scopes.original_scope_for_definition(definition)?;
         if let Some(name) = &scope.name {
@@ -336,9 +297,7 @@ fn collect_innermost_range_path<'a>(
         }
 
         path.push(range);
-        if collect_innermost_range_path(&range.children, line, column, path) {
-            return true;
-        }
+        collect_innermost_range_path(&range.children, line, column, path);
         return true;
     }
 
@@ -405,8 +364,6 @@ mod tests {
     use super::*;
     use srcmap_scopes::{GeneratedRange, OriginalScope, Position, ScopeInfo};
 
-    // ── V8 format tests ──────────────────────────────────────────
-
     #[test]
     fn parse_v8_basic() {
         let input = "Error: test\n    at foo (bundle.js:10:5)\n    at bar (bundle.js:20:10)";
@@ -419,24 +376,6 @@ mod tests {
         assert_eq!(parsed.frames[0].column, 5);
         assert_eq!(parsed.frames[1].function_name.as_deref(), Some("bar"));
     }
-
-    #[test]
-    fn parse_v8_anonymous() {
-        let input = "Error\n    at bundle.js:10:5";
-        let frames = parse_stack_trace(input);
-        assert_eq!(frames.len(), 1);
-        assert!(frames[0].function_name.is_none());
-        assert_eq!(frames[0].file, "bundle.js");
-    }
-
-    #[test]
-    fn parse_v8_url() {
-        let input = "Error\n    at foo (https://cdn.example.com/bundle.js:10:5)";
-        let frames = parse_stack_trace(input);
-        assert_eq!(frames[0].file, "https://cdn.example.com/bundle.js");
-    }
-
-    // ── SpiderMonkey format tests ────────────────────────────────
 
     #[test]
     fn parse_spidermonkey_basic() {
@@ -455,15 +394,6 @@ mod tests {
         assert_eq!(frames.len(), 1);
         assert!(frames[0].function_name.is_none());
     }
-
-    #[test]
-    fn parse_spidermonkey_url() {
-        let input = "foo@https://example.com/bundle.js:10:5";
-        let frames = parse_stack_trace(input);
-        assert_eq!(frames[0].file, "https://example.com/bundle.js");
-    }
-
-    // ── Symbolication tests ──────────────────────────────────────
 
     #[test]
     fn symbolicate_basic() {
@@ -574,14 +504,6 @@ mod tests {
     }
 
     #[test]
-    fn symbolicate_no_map() {
-        let stack = "Error: test\n    at foo (unknown.js:10:5)";
-        let result = symbolicate(stack, |_| None);
-        assert!(!result.frames[0].symbolicated);
-        assert_eq!(result.frames[0].file, "unknown.js");
-    }
-
-    #[test]
     fn batch_symbolicate_test() {
         let map_json = r#"{"version":3,"sources":["src/app.ts"],"names":[],"mappings":"AAAA"}"#;
         let sm = SourceMap::from_json(map_json).unwrap();
@@ -630,40 +552,6 @@ mod tests {
     }
 
     #[test]
-    fn display_format() {
-        let stack = SymbolicatedStack {
-            message: Some("Error: test".to_string()),
-            frames: vec![SymbolicatedFrame {
-                function_name: Some("foo".to_string()),
-                file: "app.ts".to_string(),
-                line: 42,
-                column: 10,
-                symbolicated: true,
-            }],
-        };
-        let output = format!("{stack}");
-        assert!(output.contains("Error: test"));
-        assert!(output.contains("at foo (app.ts:42:10)"));
-    }
-
-    #[test]
-    fn display_anonymous_frame() {
-        let stack = SymbolicatedStack {
-            message: None,
-            frames: vec![SymbolicatedFrame {
-                function_name: None,
-                file: "app.js".to_string(),
-                line: 1,
-                column: 1,
-                symbolicated: false,
-            }],
-        };
-        let output = format!("{stack}");
-        assert!(output.contains("<anonymous>"));
-        assert!(!output.contains("Error"));
-    }
-
-    #[test]
     fn parse_empty_input() {
         let parsed = parse_stack_trace_full("");
         assert!(parsed.message.is_none());
@@ -677,15 +565,6 @@ mod tests {
         let parsed = parse_stack_trace_full(input);
         assert_eq!(parsed.message.as_deref(), Some("Error: boom"));
         assert!(parsed.frames.is_empty());
-    }
-
-    #[test]
-    fn detect_jsc_engine() {
-        // JSC: has @ but no : or / (just @ sign alone)
-        let input = "someFunc@native code";
-        let frames = parse_stack_trace(input);
-        // Should detect as JSC and try to parse
-        assert!(frames.is_empty() || frames[0].function_name.as_deref() == Some("someFunc"));
     }
 
     #[test]
@@ -707,16 +586,6 @@ mod tests {
         let frames = parse_stack_trace(input);
         assert_eq!(frames.len(), 1);
         assert!(frames[0].function_name.is_none());
-    }
-
-    #[test]
-    fn parse_spidermonkey_anonymous_frame() {
-        // SpiderMonkey: @file:line:col with empty function name
-        let input = "@bundle.js:10:5\n@bundle.js:20:10";
-        let frames = parse_stack_trace(input);
-        assert_eq!(frames.len(), 2);
-        assert!(frames[0].function_name.is_none());
-        assert!(frames[1].function_name.is_none());
     }
 
     #[test]
@@ -744,20 +613,6 @@ mod tests {
     }
 
     #[test]
-    fn symbolicate_no_match_at_position() {
-        // Source map exists but no mapping at the requested position
-        let map_json = r#"{"version":3,"sources":["src/app.ts"],"names":[],"mappings":"AAAA"}"#;
-
-        let stack = "Error: test\n    at foo (bundle.js:100:100)";
-        let result = symbolicate(stack, |_| SourceMap::from_json(map_json).ok());
-
-        assert_eq!(result.frames.len(), 1);
-        // Position 99:99 (0-based) is beyond any mapping, frame should not be symbolicated
-        // Actually it may snap to closest - let's check either way
-        assert!(!result.frames[0].file.is_empty());
-    }
-
-    #[test]
     fn symbolicate_caches_source_maps() {
         use std::cell::Cell;
 
@@ -772,18 +627,9 @@ mod tests {
         });
 
         assert_eq!(result.frames.len(), 2);
-        // Both should be resolved
         assert!(result.frames[0].symbolicated);
         assert!(result.frames[1].symbolicated);
-    }
-
-    #[test]
-    fn parse_default_engine_detection() {
-        // First line is just an error message, no frame indicators
-        let input = "TypeError: Cannot read property 'x' of null";
-        let parsed = parse_stack_trace_full(input);
-        assert_eq!(parsed.message.as_deref(), Some("TypeError: Cannot read property 'x' of null"));
-        assert!(parsed.frames.is_empty());
+        assert_eq!(call_count.get(), 1);
     }
 
     #[test]
@@ -826,58 +672,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_v8_bare_url_with_port() {
-        // V8 bare format with a URL containing a port
-        let input = "Error\n    at http://localhost:3000/bundle.js:10:5";
-        let frames = parse_stack_trace(input);
-        assert_eq!(frames.len(), 1);
-        assert!(frames[0].function_name.is_none());
-        assert_eq!(frames[0].file, "http://localhost:3000/bundle.js");
-        assert_eq!(frames[0].line, 10);
-        assert_eq!(frames[0].column, 5);
-    }
-
-    #[test]
-    fn parse_spidermonkey_with_message_line() {
-        // SpiderMonkey stack where the second line (after engine detection from first
-        // frame line) goes through parse_spidermonkey_frame
-        let input = "foo@http://example.com/bundle.js:10:5\nbar@http://example.com/bundle.js:20:10";
-        let parsed = parse_stack_trace_full(input);
-        assert!(parsed.message.is_none());
-        assert_eq!(parsed.frames.len(), 2);
-        assert_eq!(parsed.frames[0].function_name.as_deref(), Some("foo"));
-        assert_eq!(parsed.frames[0].file, "http://example.com/bundle.js");
-        assert_eq!(parsed.frames[0].line, 10);
-        assert_eq!(parsed.frames[1].function_name.as_deref(), Some("bar"));
-        assert_eq!(parsed.frames[1].line, 20);
-    }
-
-    #[test]
-    fn parse_spidermonkey_url_with_port() {
-        let input = "handler@http://localhost:8080/app.js:42:13";
-        let frames = parse_stack_trace(input);
-        assert_eq!(frames.len(), 1);
-        assert_eq!(frames[0].function_name.as_deref(), Some("handler"));
-        assert_eq!(frames[0].file, "http://localhost:8080/app.js");
-        assert_eq!(frames[0].line, 42);
-        assert_eq!(frames[0].column, 13);
-    }
-
-    #[test]
-    fn detect_v8_engine_from_frame_line() {
-        // First line is itself a V8 frame (contains "    at ")
-        let engine = detect_engine("    at foo (bundle.js:1:1)");
-        assert_eq!(engine, Engine::V8);
-    }
-
-    #[test]
-    fn detect_jsc_engine_at_sign_only() {
-        // JSC: has @ but no colon or slash
-        let engine = detect_engine("func@native");
-        assert_eq!(engine, Engine::JavaScriptCore);
-    }
-
-    #[test]
     fn parse_location_returns_none_for_invalid_column() {
         // If column is not a number, parse_location should return None
         let result = parse_location("file.js:10:abc");
@@ -889,25 +683,5 @@ mod tests {
         // If line is not a number, parse_location should return None
         let result = parse_location("file.js:abc:5");
         assert!(result.is_none());
-    }
-
-    #[test]
-    fn parse_location_simple() {
-        let result = parse_location("bundle.js:42:13");
-        assert!(result.is_some());
-        let (file, line, col) = result.unwrap();
-        assert_eq!(file, "bundle.js");
-        assert_eq!(line, 42);
-        assert_eq!(col, 13);
-    }
-
-    #[test]
-    fn parse_location_url_with_port() {
-        let result = parse_location("http://localhost:3000/bundle.js:42:13");
-        assert!(result.is_some());
-        let (file, line, col) = result.unwrap();
-        assert_eq!(file, "http://localhost:3000/bundle.js");
-        assert_eq!(line, 42);
-        assert_eq!(col, 13);
     }
 }

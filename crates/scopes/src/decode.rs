@@ -223,7 +223,6 @@ impl DecodeState {
             &mut self.os_col,
         );
 
-        // Safe: scope_stack.is_empty() checked above.
         let building = self.scope_stack.pop().expect("non-empty: checked above");
         let finished = OriginalScope {
             start: building.start,
@@ -322,10 +321,8 @@ impl DecodeState {
         };
         Self::advance_position(line_delta, col_raw, &mut self.gr_line, &mut self.gr_col);
 
-        // Safe: range_stack.is_empty() checked above.
         let building = self.range_stack.pop().expect("non-empty: checked above");
 
-        // Merge sub-range bindings into final bindings.
         let final_bindings =
             merge_bindings(building.bindings, &building.sub_range_bindings, building.start);
 

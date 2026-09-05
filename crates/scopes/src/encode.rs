@@ -10,7 +10,7 @@ use crate::{
     Binding, GeneratedRange, OriginalScope, ScopeInfo, TAG_GENERATED_RANGE_BINDINGS,
     TAG_GENERATED_RANGE_CALL_SITE, TAG_GENERATED_RANGE_END, TAG_GENERATED_RANGE_START,
     TAG_GENERATED_RANGE_SUB_RANGE_BINDINGS, TAG_ORIGINAL_SCOPE_END, TAG_ORIGINAL_SCOPE_START,
-    TAG_ORIGINAL_SCOPE_VARIABLES, resolve_or_add_name,
+    TAG_ORIGINAL_SCOPE_VARIABLES,
 };
 
 // ── Encoder ──────────────────────────────────────────────────────
@@ -64,11 +64,6 @@ impl<'a> ScopesEncoder<'a> {
     }
 
     #[inline]
-    fn emit_tag(&mut self, tag: u64) {
-        vlq_encode_unsigned(&mut self.output, tag);
-    }
-
-    #[inline]
     fn emit_unsigned(&mut self, value: u64) {
         vlq_encode_unsigned(&mut self.output, value);
     }
@@ -78,9 +73,15 @@ impl<'a> ScopesEncoder<'a> {
         vlq_encode(&mut self.output, value);
     }
 
-    #[inline]
+    /// Look up or append a name, returning its 0-based index.
     fn name_idx(&mut self, name: &str) -> u32 {
-        resolve_or_add_name(name, self.names, &mut self.name_map)
+        if let Some(&idx) = self.name_map.get(name) {
+            return idx;
+        }
+        let idx = self.names.len() as u32;
+        self.names.push(name.to_string());
+        self.name_map.insert(name.to_string(), idx);
+        idx
     }
 
     fn encode(mut self, info: &ScopeInfo) -> String {
@@ -114,7 +115,7 @@ impl<'a> ScopesEncoder<'a> {
     fn encode_original_scope(&mut self, scope: &OriginalScope) {
         // B item: scope start
         self.emit_comma();
-        self.emit_tag(TAG_ORIGINAL_SCOPE_START);
+        self.emit_unsigned(TAG_ORIGINAL_SCOPE_START);
 
         let mut flags: u64 = 0;
         if scope.name.is_some() {
@@ -156,7 +157,7 @@ impl<'a> ScopesEncoder<'a> {
         // D item: variables
         if !scope.variables.is_empty() {
             self.emit_comma();
-            self.emit_tag(TAG_ORIGINAL_SCOPE_VARIABLES);
+            self.emit_unsigned(TAG_ORIGINAL_SCOPE_VARIABLES);
             for var in &scope.variables {
                 let idx = self.name_idx(var) as i64;
                 self.emit_signed(idx - self.os_var);
@@ -164,14 +165,13 @@ impl<'a> ScopesEncoder<'a> {
             }
         }
 
-        // Recursively encode children
         for child in &scope.children {
             self.encode_original_scope(child);
         }
 
         // C item: scope end
         self.emit_comma();
-        self.emit_tag(TAG_ORIGINAL_SCOPE_END);
+        self.emit_unsigned(TAG_ORIGINAL_SCOPE_END);
 
         let line_delta = scope.end.line - self.os_line;
         self.emit_unsigned(line_delta as u64);
@@ -190,20 +190,19 @@ impl<'a> ScopesEncoder<'a> {
         // I item: call site
         if let Some(ref cs) = range.call_site {
             self.emit_comma();
-            self.emit_tag(TAG_GENERATED_RANGE_CALL_SITE);
+            self.emit_unsigned(TAG_GENERATED_RANGE_CALL_SITE);
             self.emit_unsigned(cs.source_index as u64);
             self.emit_unsigned(cs.line as u64);
             self.emit_unsigned(cs.column as u64);
         }
 
-        // Recursively encode children
         for child in &range.children {
             self.encode_generated_range(child);
         }
 
         // F item: range end
         self.emit_comma();
-        self.emit_tag(TAG_GENERATED_RANGE_END);
+        self.emit_unsigned(TAG_GENERATED_RANGE_END);
 
         let line_delta = range.end.line - self.gr_line;
         if line_delta != 0 {
@@ -218,7 +217,7 @@ impl<'a> ScopesEncoder<'a> {
 
     fn encode_generated_range_start(&mut self, range: &GeneratedRange) {
         self.emit_comma();
-        self.emit_tag(TAG_GENERATED_RANGE_START);
+        self.emit_unsigned(TAG_GENERATED_RANGE_START);
 
         let line_delta = range.start.line - self.gr_line;
 
@@ -260,7 +259,7 @@ impl<'a> ScopesEncoder<'a> {
         }
 
         self.emit_comma();
-        self.emit_tag(TAG_GENERATED_RANGE_BINDINGS);
+        self.emit_unsigned(TAG_GENERATED_RANGE_BINDINGS);
         for binding in &range.bindings {
             match binding {
                 Binding::Expression(expr) => {
@@ -301,7 +300,7 @@ impl<'a> ScopesEncoder<'a> {
             }
 
             self.emit_comma();
-            self.emit_tag(TAG_GENERATED_RANGE_SUB_RANGE_BINDINGS);
+            self.emit_unsigned(TAG_GENERATED_RANGE_SUB_RANGE_BINDINGS);
 
             // Variable index (relative to previous H item, or 0 for the first)
             let var_delta = i as u64 - h_var_idx;
