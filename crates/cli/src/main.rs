@@ -26,8 +26,6 @@ use url::Url;
 const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_FETCH_REDIRECTS: usize = 10;
 
-// ── CLI definition ───────────────────────────────────────────────
-
 #[derive(Parser)]
 #[command(
     name = "srcmap",
@@ -267,8 +265,6 @@ enum Command {
     Schema,
 }
 
-// ── Structured error ─────────────────────────────────────────────
-
 struct CliError {
     message: String,
     code: &'static str,
@@ -334,8 +330,6 @@ impl From<HttpGetError> for CliError {
         }
     }
 }
-
-// ── Input validation ─────────────────────────────────────────────
 
 /// Reject strings containing ASCII control characters (below 0x20, except newline/tab)
 fn reject_control_chars(input: &str, label: &str) -> Result<(), CliError> {
@@ -416,9 +410,7 @@ fn validate_source_name(source: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-// ── Helpers ──────────────────────────────────────────────────────
-
-fn read_file_or_stdin(path: &PathBuf) -> Result<String, CliError> {
+fn read_file_or_stdin(path: &Path) -> Result<String, CliError> {
     if path.as_os_str() == "-" {
         let mut buf = String::new();
         io::stdin()
@@ -431,7 +423,7 @@ fn read_file_or_stdin(path: &PathBuf) -> Result<String, CliError> {
     }
 }
 
-fn parse_source_map(path: &PathBuf) -> Result<(SourceMap, String), CliError> {
+fn parse_source_map(path: &Path) -> Result<(SourceMap, String), CliError> {
     let json = read_file_or_stdin(path)?;
     let sm = SourceMap::from_json(&json)
         .map_err(|e| CliError::parse(format!("invalid source map: {e}")))?;
@@ -449,6 +441,13 @@ fn write_output(output: &Option<PathBuf>, content: &str) -> Result<(), CliError>
             println!("{content}");
             Ok(())
         }
+    }
+}
+
+fn output_dir_or_cwd(output: &Option<PathBuf>) -> Result<PathBuf, CliError> {
+    match output {
+        Some(dir) => Ok(dir.clone()),
+        None => std::env::current_dir().map_err(|e| CliError::io(format!("cannot get cwd: {e}"))),
     }
 }
 
@@ -855,8 +854,6 @@ fn format_size(bytes: usize) -> String {
     }
 }
 
-// ── Commands ─────────────────────────────────────────────────────
-
 fn print_info_json(sm: &SourceMap, raw_len: usize) {
     let has_content = sm.sources_content.iter().filter(|c| c.is_some()).count();
     let content_size: usize =
@@ -944,7 +941,7 @@ fn print_info_names(sm: &SourceMap) {
     }
 }
 
-fn cmd_info(file: &PathBuf, json: bool) -> Result<(), CliError> {
+fn cmd_info(file: &Path, json: bool) -> Result<(), CliError> {
     let (sm, raw) = parse_source_map(file)?;
 
     if json {
@@ -958,7 +955,7 @@ fn cmd_info(file: &PathBuf, json: bool) -> Result<(), CliError> {
     Ok(())
 }
 
-fn cmd_validate(file: &PathBuf, json: bool) -> Result<bool, CliError> {
+fn cmd_validate(file: &Path, json: bool) -> Result<bool, CliError> {
     let raw = read_file_or_stdin(file)?;
     match SourceMap::from_json(&raw) {
         Ok(sm) => {
@@ -1084,7 +1081,7 @@ fn print_lookup_text(
 }
 
 fn cmd_lookup(
-    file: &PathBuf,
+    file: &Path,
     line: u32,
     column: u32,
     bias: &str,
@@ -1115,7 +1112,7 @@ fn cmd_lookup(
 }
 
 fn cmd_resolve(
-    file: &PathBuf,
+    file: &Path,
     source: &str,
     line: u32,
     column: u32,
@@ -1151,13 +1148,7 @@ fn cmd_resolve(
 fn cmd_decode(mappings: Option<String>, compact: bool) -> Result<(), CliError> {
     let input = match mappings {
         Some(m) => m,
-        None => {
-            let mut buf = String::new();
-            io::stdin()
-                .read_to_string(&mut buf)
-                .map_err(|e| CliError::io(format!("failed to read stdin: {e}")))?;
-            buf.trim().to_string()
-        }
+        None => read_file_or_stdin(Path::new("-"))?.trim().to_string(),
     };
 
     reject_control_chars(&input, "mappings input")?;
@@ -1177,16 +1168,7 @@ fn cmd_decode(mappings: Option<String>, compact: bool) -> Result<(), CliError> {
 }
 
 fn cmd_encode(file: Option<PathBuf>, json: bool) -> Result<(), CliError> {
-    let input = match file {
-        Some(path) => read_file_or_stdin(&path)?,
-        None => {
-            let mut buf = String::new();
-            io::stdin()
-                .read_to_string(&mut buf)
-                .map_err(|e| CliError::io(format!("failed to read stdin: {e}")))?;
-            buf
-        }
-    };
+    let input = read_file_or_stdin(file.as_deref().unwrap_or_else(|| Path::new("-")))?;
 
     let raw: Vec<Vec<Vec<i64>>> =
         serde_json::from_str(&input).map_err(|e| CliError::parse(format!("invalid JSON: {e}")))?;
@@ -1293,7 +1275,7 @@ fn print_mappings_table(
 }
 
 fn cmd_mappings(
-    file: &PathBuf,
+    file: &Path,
     source_filter: &Option<String>,
     limit: usize,
     offset: usize,
@@ -1322,17 +1304,6 @@ fn cmd_mappings(
         print_mappings_table(&sm, &filtered, total, offset, limit);
     }
 
-    Ok(())
-}
-
-fn validate_concat_inputs(files: &[PathBuf], output: &Option<PathBuf>) -> Result<(), CliError> {
-    if files.is_empty() {
-        return Err(CliError::validation("at least one source map file is required"));
-    }
-
-    if let Some(path) = output {
-        validate_output_path(path)?;
-    }
     Ok(())
 }
 
@@ -1405,7 +1376,12 @@ fn cmd_concat(
     json: bool,
     dry_run: bool,
 ) -> Result<(), CliError> {
-    validate_concat_inputs(files, output)?;
+    if files.is_empty() {
+        return Err(CliError::validation("at least one source map file is required"));
+    }
+    if let Some(path) = output {
+        validate_output_path(path)?;
+    }
 
     let (map_json, result, file_stats) = build_concat_map(files, file_name)?;
 
@@ -1471,35 +1447,28 @@ fn load_explicit_upstream(
     Some(sm)
 }
 
+/// Read `map_path` only when it canonicalizes to a location inside `search_dir`.
+fn read_map_within(search_dir: &Path, map_path: &Path) -> Option<SourceMap> {
+    let canonical = map_path.canonicalize().ok()?;
+    if !canonical.starts_with(search_dir) {
+        return None;
+    }
+    let content = fs::read_to_string(&canonical).ok()?;
+    SourceMap::from_json(&content).ok()
+}
+
 fn load_directory_upstream(
     source: &str,
     search_dir: &Path,
     found_upstreams: &std::cell::RefCell<Vec<String>>,
 ) -> Option<SourceMap> {
-    let map_path = search_dir.join(format!("{source}.map"));
-    if let Ok(canonical) = map_path.canonicalize()
-        && canonical.starts_with(search_dir)
-        && let Ok(content) = fs::read_to_string(&canonical)
-        && let Ok(sm) = SourceMap::from_json(&content)
-    {
-        found_upstreams.borrow_mut().push(source.to_string());
-        return Some(sm);
-    }
-
-    let source_path = Path::new(source);
-    let stem = source_path.file_stem()?;
-    let map_name = format!("{}.map", stem.to_string_lossy());
-    let map_path = search_dir.join(map_name);
-    if let Ok(canonical) = map_path.canonicalize()
-        && canonical.starts_with(search_dir)
-        && let Ok(content) = fs::read_to_string(&canonical)
-        && let Ok(sm) = SourceMap::from_json(&content)
-    {
-        found_upstreams.borrow_mut().push(source.to_string());
-        return Some(sm);
-    }
-
-    None
+    let sm =
+        read_map_within(search_dir, &search_dir.join(format!("{source}.map"))).or_else(|| {
+            let stem = Path::new(source).file_stem()?;
+            read_map_within(search_dir, &search_dir.join(format!("{}.map", stem.to_string_lossy())))
+        })?;
+    found_upstreams.borrow_mut().push(source.to_string());
+    Some(sm)
 }
 
 fn print_remap_dry_run(
@@ -1541,7 +1510,7 @@ fn print_remap_dry_run(
 }
 
 fn cmd_remap(
-    file: &PathBuf,
+    file: &Path,
     dir: &Option<PathBuf>,
     upstreams: &[String],
     output: &Option<PathBuf>,
@@ -1554,13 +1523,11 @@ fn cmd_remap(
 
     let (outer, _) = parse_source_map(file)?;
 
-    // Validate and resolve search directory
     let cwd = std::env::current_dir().map_err(|e| CliError::io(format!("cannot get cwd: {e}")))?;
     let safe_dir = if let Some(d) = dir { Some(validate_safe_path(d, &cwd)?) } else { None };
 
     let upstream_paths = parse_upstream_paths(upstreams)?;
 
-    // Track which upstream maps were found
     let found_upstreams: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
     let skipped_sources: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
 
@@ -1569,13 +1536,11 @@ fn cmd_remap(
             return Some(sm);
         }
 
-        // Validate source name before using it in path construction
         if validate_source_name(source).is_err() {
             skipped_sources.borrow_mut().push(source.to_string());
             return None;
         }
 
-        // Try directory search: look for source.map next to the source
         if let Some(ref search_dir) = safe_dir
             && let Some(sm) = load_directory_upstream(source, search_dir, &found_upstreams)
         {
@@ -1634,7 +1599,7 @@ fn write_remap_output(
 }
 
 fn cmd_symbolicate(
-    file: &PathBuf,
+    file: &Path,
     dir: &Option<PathBuf>,
     maps: &[String],
     json: bool,
@@ -1644,7 +1609,6 @@ fn cmd_symbolicate(
     let cwd = std::env::current_dir().map_err(|e| CliError::io(format!("cannot get cwd: {e}")))?;
     let safe_dir = if let Some(d) = dir { Some(validate_safe_path(d, &cwd)?) } else { None };
 
-    // Build explicit map: source → SourceMap
     let mut explicit_maps: std::collections::HashMap<String, SourceMap> =
         std::collections::HashMap::new();
     for entry in maps {
@@ -1660,24 +1624,11 @@ fn cmd_symbolicate(
     }
 
     let result = srcmap_symbolicate::symbolicate(&stack_input, |source| {
-        // Try explicit maps first
         if let Some(sm) = explicit_maps.get(source) {
             return Some(sm.clone());
         }
-
-        // Try directory search
-        if let Some(ref search_dir) = safe_dir {
-            let map_path = search_dir.join(format!("{source}.map"));
-            if let Ok(canonical) = map_path.canonicalize()
-                && canonical.starts_with(search_dir)
-                && let Ok(content) = fs::read_to_string(&canonical)
-                && let Ok(sm) = SourceMap::from_json(&content)
-            {
-                return Some(sm);
-            }
-        }
-
-        None
+        let search_dir = safe_dir.as_ref()?;
+        read_map_within(search_dir, &search_dir.join(format!("{source}.map")))
     });
 
     if json {
@@ -1801,7 +1752,7 @@ fn range_to_json(range: &srcmap_scopes::GeneratedRange, sources: &[String]) -> s
     })
 }
 
-fn cmd_scopes(file: &PathBuf, json: bool) -> Result<(), CliError> {
+fn cmd_scopes(file: &Path, json: bool) -> Result<(), CliError> {
     let (sm, _) = parse_source_map(file)?;
 
     let scopes = sm
@@ -1834,7 +1785,6 @@ fn cmd_scopes(file: &PathBuf, json: bool) -> Result<(), CliError> {
         });
         println!("{}", serde_json::to_string_pretty(&obj).unwrap());
     } else {
-        // Original scopes
         let scope_count: usize = scopes.scopes.iter().filter(|s| s.is_some()).count();
         println!("Original scopes ({scope_count} sources with scopes):");
         for (i, scope) in scopes.scopes.iter().enumerate() {
@@ -1846,7 +1796,6 @@ fn cmd_scopes(file: &PathBuf, json: bool) -> Result<(), CliError> {
             }
         }
 
-        // Generated ranges
         println!();
         println!("Generated ranges ({}):", scopes.ranges.len());
         for range in &scopes.ranges {
@@ -1873,17 +1822,6 @@ fn parse_fetch_url(input: &str) -> Result<Url, CliError> {
     })?;
     validate_http_url(&url)?;
     Ok(url)
-}
-
-fn fetch_output_dir(output: &Option<PathBuf>) -> Result<(PathBuf, Dir), CliError> {
-    let output_dir = match output {
-        Some(dir) => dir.clone(),
-        None => {
-            std::env::current_dir().map_err(|e| CliError::io(format!("cannot get cwd: {e}")))?
-        }
-    };
-    let output_handle = open_or_create_output_dir(&output_dir)?;
-    Ok((output_dir, output_handle))
 }
 
 fn write_fetch_output(
@@ -2054,11 +1992,11 @@ fn cmd_fetch(
     let url = parse_fetch_url(url)?;
     let agent = http_agent();
 
-    let (output_dir, output_handle) = fetch_output_dir(output)?;
+    let output_dir = output_dir_or_cwd(output)?;
+    let output_handle = open_or_create_output_dir(&output_dir)?;
     let (bundle_filename, bundle_path, bundle_body, bundle_url) =
         fetch_bundle(&agent, &url, &output_handle, &output_dir, allow_cross_origin)?;
 
-    // Extract sourceMappingURL
     let map_result = match parse_source_mapping_url(&bundle_body) {
         Some(SourceMappingUrl::Inline(decoded_json)) => Some(save_inline_source_map(
             &bundle_filename,
@@ -2086,13 +2024,6 @@ fn cmd_fetch(
     print_fetch_result(bundle_url.as_str(), &bundle_path, bundle_body.len(), &map_result, json);
 
     Ok(())
-}
-
-fn source_output_dir(output: &Option<PathBuf>) -> Result<PathBuf, CliError> {
-    match output {
-        Some(dir) => Ok(dir.clone()),
-        None => std::env::current_dir().map_err(|e| CliError::io(format!("cannot get cwd: {e}"))),
-    }
 }
 
 fn extract_source_contents(
@@ -2214,14 +2145,14 @@ fn print_source_entries(sm: &SourceMap, entries: &[serde_json::Value]) {
 }
 
 fn cmd_sources(
-    file: &PathBuf,
+    file: &Path,
     extract: bool,
     output: &Option<PathBuf>,
     json: bool,
 ) -> Result<(), CliError> {
     let (sm, _) = parse_source_map(file)?;
     if extract {
-        let output_dir = source_output_dir(output)?;
+        let output_dir = output_dir_or_cwd(output)?;
         let (extracted, skipped) = extract_source_contents(&sm, &output_dir)?;
 
         if json {
@@ -2484,8 +2415,6 @@ fn cmd_schema() -> Result<(), CliError> {
     println!("{}", serde_json::to_string_pretty(&schema).unwrap());
     Ok(())
 }
-
-// ── Main ─────────────────────────────────────────────────────────
 
 fn main() -> ExitCode {
     let cli = Cli::parse();

@@ -1,11 +1,11 @@
 use std::fmt::Write as _;
 use std::fs;
-use std::io::{Cursor, Read, Write};
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 use std::sync::mpsc::{self, Receiver};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 fn srcmap() -> Command {
@@ -14,6 +14,18 @@ fn srcmap() -> Command {
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)
+}
+
+fn run_with_stdin(args: &[&str], input: &[u8]) -> Output {
+    let mut child = srcmap()
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    child.wait_with_output().unwrap()
 }
 
 fn write_sources_map(dir: &Path, sources: &[&str]) -> PathBuf {
@@ -48,8 +60,6 @@ fn extract_sources(map: &Path, output_dir: &Path) -> serde_json::Value {
     serde_json::from_slice(&out.stdout).unwrap()
 }
 
-// ── info ─────────────────────────────────────────────────────────
-
 #[test]
 fn info_human() {
     let out = srcmap().args(["info", fixture("simple.js.map").to_str().unwrap()]).output().unwrap();
@@ -75,8 +85,6 @@ fn info_json() {
     assert_eq!(v["mappings"], 14);
     assert_eq!(v["lines"], 2);
 }
-
-// ── validate ─────────────────────────────────────────────────────
 
 #[test]
 fn validate_valid() {
@@ -113,14 +121,11 @@ fn validate_invalid_json() {
         .args(["validate", fixture("invalid.js.map").to_str().unwrap(), "--json"])
         .output()
         .unwrap();
-    // validate exits with failure for invalid maps
     assert!(!out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["valid"], false);
     assert!(v["error"].as_str().unwrap().contains("VLQ"));
 }
-
-// ── lookup ───────────────────────────────────────────────────────
 
 #[test]
 fn lookup_found() {
@@ -145,8 +150,6 @@ fn lookup_not_found() {
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("no mapping found"));
 }
-
-// ── resolve ──────────────────────────────────────────────────────
 
 #[test]
 fn resolve_found() {
@@ -184,8 +187,6 @@ fn resolve_not_found() {
     assert!(!out.status.success());
 }
 
-// ── decode / encode ──────────────────────────────────────────────
-
 #[test]
 fn decode_inline() {
     let out = srcmap().args(["decode", "AAAA;AACA"]).output().unwrap();
@@ -202,24 +203,12 @@ fn decode_compact() {
     let out = srcmap().args(["decode", "AAAA", "--compact"]).output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
-    // Compact output should be a single line
     assert_eq!(stdout.trim().lines().count(), 1);
 }
 
 #[test]
 fn encode_from_stdin() {
-    let out = srcmap()
-        .arg("encode")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            child.stdin.take().unwrap().write_all(b"[[[0,0,0,0]],[[0,0,1,0]]]").unwrap();
-            child.wait_with_output()
-        })
-        .unwrap();
+    let out = run_with_stdin(&["encode"], b"[[[0,0,0,0]],[[0,0,1,0]]]");
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert_eq!(stdout.trim(), "AAAA;AACA");
@@ -227,24 +216,11 @@ fn encode_from_stdin() {
 
 #[test]
 fn encode_json_output() {
-    let out = srcmap()
-        .args(["encode", "--json"])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            child.stdin.take().unwrap().write_all(b"[[[0,0,0,0]]]").unwrap();
-            child.wait_with_output()
-        })
-        .unwrap();
+    let out = run_with_stdin(&["encode", "--json"], b"[[[0,0,0,0]]]");
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["vlq"], "AAAA");
 }
-
-// ── mappings ─────────────────────────────────────────────────────
 
 #[test]
 fn mappings_json() {
@@ -293,8 +269,6 @@ fn mappings_source_not_found() {
     assert!(!out.status.success());
 }
 
-// ── concat ───────────────────────────────────────────────────────
-
 #[test]
 fn concat_dry_run() {
     let out = srcmap()
@@ -325,7 +299,6 @@ fn concat_to_stdout() {
         .output()
         .unwrap();
     assert!(out.status.success());
-    // Output should be valid JSON source map
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["version"], 3);
     assert!(v["mappings"].is_string());
@@ -352,8 +325,6 @@ fn concat_to_file() {
     assert_eq!(v["version"], 3);
 }
 
-// ── remap ────────────────────────────────────────────────────────
-
 #[test]
 fn remap_dry_run() {
     let out = srcmap()
@@ -364,8 +335,6 @@ fn remap_dry_run() {
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["dryRun"], true);
 }
-
-// ── scopes ───────────────────────────────────────────────────────
 
 #[test]
 fn scopes_no_data() {
@@ -387,8 +356,6 @@ fn scopes_no_data_json() {
     assert_eq!(v["code"], "NOT_FOUND");
 }
 
-// ── symbolicate ──────────────────────────────────────────────────
-
 #[test]
 fn symbolicate_json() {
     let out = srcmap()
@@ -409,30 +376,20 @@ fn symbolicate_json() {
 
 #[test]
 fn symbolicate_from_stdin() {
-    let trace = std::fs::read(fixture("stacktrace.txt")).unwrap();
-    let out = srcmap()
-        .args([
+    let trace = fs::read(fixture("stacktrace.txt")).unwrap();
+    let out = run_with_stdin(
+        &[
             "symbolicate",
             "-",
             "--map",
             &format!("simple.js={}", fixture("simple.js.map").display()),
-        ])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            child.stdin.take().unwrap().write_all(&trace).unwrap();
-            child.wait_with_output()
-        })
-        .unwrap();
+        ],
+        &trace,
+    );
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("src/app.ts"));
 }
-
-// ── scopes with data ─────────────────────────────────────────────
 
 #[test]
 fn scopes_human() {
@@ -457,11 +414,9 @@ fn scopes_json() {
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(!v["originalScopes"].as_array().unwrap().is_empty());
     assert!(!v["generatedRanges"].as_array().unwrap().is_empty());
-    // Check original scope structure
     let scope = &v["originalScopes"][0]["scope"];
     assert_eq!(scope["kind"], "module");
     assert!(scope["variables"].as_array().unwrap().contains(&serde_json::json!("result")));
-    // Check generated range bindings
     let range = &v["generatedRanges"][0];
     assert_eq!(range["definition"], 0);
     let child = &range["children"][0];
@@ -469,8 +424,6 @@ fn scopes_json() {
     assert!(child["isStackFrame"].as_bool().unwrap());
     assert_eq!(child["callSite"]["source"], "math.ts");
 }
-
-// ── schema ───────────────────────────────────────────────────────
 
 #[test]
 fn schema_output() {
@@ -491,10 +444,14 @@ fn schema_output() {
     assert!(names.contains(&"remap"));
     assert!(names.contains(&"symbolicate"));
     assert!(names.contains(&"scopes"));
+    assert!(names.contains(&"fetch"));
+    assert!(names.contains(&"sources"));
     assert!(names.contains(&"schema"));
-}
 
-// ── sources ──────────────────────────────────────────────────
+    let fetch = commands.iter().find(|command| command["name"] == "fetch").unwrap();
+    assert_eq!(fetch["flags"]["--allow-cross-origin"]["type"], "bool");
+    assert_eq!(fetch["flags"]["--allow-cross-origin"]["default"], false);
+}
 
 #[test]
 fn sources_list_human() {
@@ -544,14 +501,11 @@ fn sources_extract() {
     assert_eq!(v["extracted"].as_array().unwrap().len(), 1);
     assert_eq!(v["skipped"].as_array().unwrap().len(), 1);
 
-    // Verify the extracted file exists and has correct content
     let extracted_path = dir.path().join("src/app.ts");
     assert!(extracted_path.exists());
     let content = fs::read_to_string(&extracted_path).unwrap();
     assert!(content.contains("const greet"));
 }
-
-// ── lookup with context ─────────────────────────────────────
 
 #[test]
 fn lookup_with_context_human() {
@@ -585,16 +539,12 @@ fn lookup_with_context_json() {
     assert!(v["context"].is_array());
     let ctx = v["context"].as_array().unwrap();
     assert!(!ctx.is_empty());
-    // First line should be highlighted (line 0)
     assert_eq!(ctx[0]["highlight"], true);
     assert!(ctx[0]["text"].as_str().unwrap().contains("const greet"));
 }
 
-// ── lookup context edge cases ────────────────────────────────
-
 #[test]
 fn lookup_context_zero_no_context_block() {
-    // --context 0 should behave like normal lookup (no context in output)
     let out = srcmap()
         .args([
             "lookup",
@@ -633,8 +583,6 @@ fn lookup_context_no_sources_content() {
     assert_eq!(v["source"], "src/other.ts");
     assert!(v["context"].is_null());
 }
-
-// ── sources extract with special paths ──────────────────────
 
 #[test]
 fn sources_extract_webpack_paths() {
@@ -933,14 +881,12 @@ fn sources_extract_security_resists_parent_swap_race() {
     assert_eq!(fs::read_dir(outside_dir).unwrap().count(), 0);
 }
 
-// ── fetch ────────────────────────────────────────────────────
-
 #[test]
 fn fetch_invalid_url() {
     let out = srcmap().args(["fetch", "not-a-url"]).output().unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();
-    assert!(stderr.contains("INVALID_INPUT") || stderr.contains("http://"));
+    assert!(stderr.contains("http://"));
 }
 
 #[test]
@@ -955,14 +901,10 @@ const MAX_REQUEST_HEADERS_SIZE: usize = 32 * 1024;
 
 fn read_request(stream: &mut TcpStream) -> String {
     stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-    read_request_from(stream)
-}
-
-fn read_request_from<R: Read>(reader: &mut R) -> String {
     let mut request = Vec::with_capacity(512);
     while !request.ends_with(b"\r\n\r\n") {
         let mut byte = [0_u8; 1];
-        reader.read_exact(&mut byte).unwrap();
+        stream.read_exact(&mut byte).unwrap();
         request.push(byte[0]);
         assert!(
             request.len() <= MAX_REQUEST_HEADERS_SIZE,
@@ -973,55 +915,6 @@ fn read_request_from<R: Read>(reader: &mut R) -> String {
     let request_line = request.split(|byte| *byte == b'\n').next().unwrap_or_default();
     let request_line = String::from_utf8_lossy(request_line);
     request_line.split_whitespace().nth(1).unwrap_or_default().to_string()
-}
-
-struct StagedRequest {
-    request_line: Cursor<Vec<u8>>,
-    headers: Cursor<Vec<u8>>,
-    waiting_sender: Option<mpsc::Sender<()>>,
-    release_receiver: Receiver<()>,
-}
-
-impl Read for StagedRequest {
-    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        let read = self.request_line.read(buffer)?;
-        if read > 0 {
-            return Ok(read);
-        }
-
-        if let Some(sender) = self.waiting_sender.take() {
-            sender.send(()).unwrap();
-            self.release_receiver.recv().unwrap();
-        }
-
-        self.headers.read(buffer)
-    }
-}
-
-#[test]
-fn read_request_waits_for_complete_headers() {
-    let (waiting_sender, waiting_receiver) = mpsc::channel();
-    let (release_sender, release_receiver) = mpsc::channel();
-    let (path_sender, path_receiver) = mpsc::channel();
-    let mut request = StagedRequest {
-        request_line: Cursor::new(b"GET /complete HTTP/1.1\r\n".to_vec()),
-        headers: Cursor::new(b"Host: localhost\r\nConnection: close\r\n\r\n".to_vec()),
-        waiting_sender: Some(waiting_sender),
-        release_receiver,
-    };
-    let server = thread::spawn(move || {
-        path_sender.send(read_request_from(&mut request)).unwrap();
-    });
-
-    waiting_receiver.recv_timeout(Duration::from_secs(2)).unwrap();
-    assert!(
-        matches!(path_receiver.try_recv(), Err(mpsc::TryRecvError::Empty)),
-        "request completed before the header terminator"
-    );
-
-    release_sender.send(()).unwrap();
-    assert_eq!(path_receiver.recv_timeout(Duration::from_secs(2)).unwrap(), "/complete");
-    server.join().unwrap();
 }
 
 fn response(status: &str, headers: &[(&str, &str)], body: &str) -> String {
@@ -1066,12 +959,31 @@ fn serve_once(listener: TcpListener, reply: String, delay: Duration) -> Receiver
     receiver
 }
 
+fn serve_sequence(listener: TcpListener, replies: Vec<String>) -> JoinHandle<()> {
+    thread::spawn(move || {
+        for reply in replies {
+            let mut stream = accept_connection(&listener);
+            let _ = read_request(&mut stream);
+            stream.write_all(reply.as_bytes()).unwrap();
+        }
+    })
+}
+
 fn local_url(listener: &TcpListener, path: &str) -> String {
     format!("http://{}{path}", listener.local_addr().unwrap())
 }
 
 fn source_map_json() -> &'static str {
     r#"{"version":3,"sources":[],"names":[],"mappings":""}"#
+}
+
+const INLINE_MAP_BUNDLE: &str = "console.log(1);\n//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IiJ9";
+
+fn bundle_then_map(listener: &TcpListener, bundle: &str) -> JoinHandle<()> {
+    serve_sequence(
+        listener.try_clone().unwrap(),
+        vec![response("200 OK", &[], bundle), response("200 OK", &[], source_map_json())],
+    )
 }
 
 #[test]
@@ -1097,14 +1009,8 @@ fn fetch_security_rejects_existing_bundle_destination() {
 #[test]
 fn fetch_security_rejects_existing_source_map_destination() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let server = listener.try_clone().unwrap();
-    let received = thread::spawn(move || {
-        for body in ["console.log(1);\n//# sourceMappingURL=bundle.js.map", source_map_json()] {
-            let mut stream = accept_connection(&server);
-            let _ = read_request(&mut stream);
-            stream.write_all(response("200 OK", &[], body).as_bytes()).unwrap();
-        }
-    });
+    let received =
+        bundle_then_map(&listener, "console.log(1);\n//# sourceMappingURL=bundle.js.map");
     let output = tempfile::tempdir().unwrap();
     let map_path = output.path().join("bundle.js.map");
     fs::write(&map_path, "sentinel").unwrap();
@@ -1150,8 +1056,7 @@ fn fetch_security_rejects_symlink_output_root() {
     use std::os::unix::fs::symlink;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let inline = "console.log(1);\n//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IiJ9";
-    let reply = response("200 OK", &[], inline);
+    let reply = response("200 OK", &[], INLINE_MAP_BUNDLE);
     let received = serve_once(listener.try_clone().unwrap(), reply, Duration::ZERO);
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
@@ -1177,8 +1082,7 @@ fn fetch_security_rejects_symlink_output_ancestor() {
     use std::os::unix::fs::symlink;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let inline = "console.log(1);\n//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IiJ9";
-    let reply = response("200 OK", &[], inline);
+    let reply = response("200 OK", &[], INLINE_MAP_BUNDLE);
     let received = serve_once(listener.try_clone().unwrap(), reply, Duration::ZERO);
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
@@ -1205,14 +1109,8 @@ fn fetch_security_rejects_symlink_source_map_destination() {
     use std::os::unix::fs::symlink;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let server = listener.try_clone().unwrap();
-    let received = thread::spawn(move || {
-        for body in ["console.log(1);\n//# sourceMappingURL=bundle.js.map", source_map_json()] {
-            let mut stream = accept_connection(&server);
-            let _ = read_request(&mut stream);
-            stream.write_all(response("200 OK", &[], body).as_bytes()).unwrap();
-        }
-    });
+    let received =
+        bundle_then_map(&listener, "console.log(1);\n//# sourceMappingURL=bundle.js.map");
     let output = tempfile::tempdir().unwrap();
     let outside = tempfile::NamedTempFile::new().unwrap();
     fs::write(outside.path(), "sentinel").unwrap();
@@ -1233,16 +1131,8 @@ fn fetch_security_rejects_symlink_source_map_destination() {
 fn fetch_security_rejects_bundle_and_map_filename_collisions() {
     for map_ref in ["?map", "#map", "bundle.js"] {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let server = listener.try_clone().unwrap();
         let bundle = format!("console.log(1);\n//# sourceMappingURL={map_ref}");
-        let expected_bundle = bundle.clone();
-        let received = thread::spawn(move || {
-            for body in [bundle.as_str(), source_map_json()] {
-                let mut stream = accept_connection(&server);
-                let _ = read_request(&mut stream);
-                stream.write_all(response("200 OK", &[], body).as_bytes()).unwrap();
-            }
-        });
+        let received = bundle_then_map(&listener, &bundle);
         let output = tempfile::tempdir().unwrap();
 
         let out = srcmap()
@@ -1253,23 +1143,17 @@ fn fetch_security_rejects_bundle_and_map_filename_collisions() {
 
         received.join().unwrap();
         assert!(!out.status.success(), "accepted colliding map reference {map_ref:?}");
-        assert_eq!(fs::read_to_string(output.path().join("bundle.js")).unwrap(), expected_bundle);
+        assert_eq!(fs::read_to_string(output.path().join("bundle.js")).unwrap(), bundle);
     }
 }
 
 #[test]
 fn fetch_conventional_source_map_ignores_not_found() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let server = listener.try_clone().unwrap();
-    let received = thread::spawn(move || {
-        for reply in
-            [response("200 OK", &[], "console.log(1)"), response("404 Not Found", &[], "missing")]
-        {
-            let mut stream = accept_connection(&server);
-            let _ = read_request(&mut stream);
-            stream.write_all(reply.as_bytes()).unwrap();
-        }
-    });
+    let received = serve_sequence(
+        listener.try_clone().unwrap(),
+        vec![response("200 OK", &[], "console.log(1)"), response("404 Not Found", &[], "missing")],
+    );
     let output = tempfile::tempdir().unwrap();
 
     let out = srcmap()
@@ -1287,17 +1171,13 @@ fn fetch_conventional_source_map_ignores_not_found() {
 #[test]
 fn fetch_conventional_source_map_propagates_server_error() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let server = listener.try_clone().unwrap();
-    let received = thread::spawn(move || {
-        for reply in [
+    let received = serve_sequence(
+        listener.try_clone().unwrap(),
+        vec![
             response("200 OK", &[], "console.log(1)"),
             response("500 Internal Server Error", &[], "failed"),
-        ] {
-            let mut stream = accept_connection(&server);
-            let _ = read_request(&mut stream);
-            stream.write_all(reply.as_bytes()).unwrap();
-        }
-    });
+        ],
+    );
     let output = tempfile::tempdir().unwrap();
 
     let out = srcmap()
@@ -1344,17 +1224,13 @@ fn fetch_conventional_source_map_propagates_cross_origin_redirect() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let target = TcpListener::bind("127.0.0.1:0").unwrap();
     let target_url = local_url(&target, "/bundle.js.map");
-    let server = listener.try_clone().unwrap();
-    let received = thread::spawn(move || {
-        for reply in [
+    let received = serve_sequence(
+        listener.try_clone().unwrap(),
+        vec![
             response("200 OK", &[], "console.log(1)"),
             response("302 Found", &[("Location", &target_url)], ""),
-        ] {
-            let mut stream = accept_connection(&server);
-            let _ = read_request(&mut stream);
-            stream.write_all(reply.as_bytes()).unwrap();
-        }
-    });
+        ],
+    );
     let target_received =
         serve_once(target, response("200 OK", &[], source_map_json()), Duration::ZERO);
     let output = tempfile::tempdir().unwrap();
@@ -1476,8 +1352,7 @@ fn fetch_security_allows_cross_origin_redirect_with_opt_in() {
     let target_url = local_url(&target_listener, "/bundle.js");
     let redirect_reply = response("302 Found", &[("Location", &target_url)], "");
     serve_once(redirect_listener.try_clone().unwrap(), redirect_reply, Duration::ZERO);
-    let inline = "console.log(1);\n//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IiJ9";
-    let target_reply = response("200 OK", &[], inline);
+    let target_reply = response("200 OK", &[], INLINE_MAP_BUNDLE);
     let target_received = serve_once(target_listener, target_reply, Duration::ZERO);
     let output = tempfile::tempdir().unwrap();
 
@@ -1496,14 +1371,8 @@ fn fetch_security_allows_cross_origin_redirect_with_opt_in() {
 #[test]
 fn fetch_security_allows_same_origin_relative_source_map() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let server = listener.try_clone().unwrap();
-    let received = thread::spawn(move || {
-        for body in ["console.log(1);\n//# sourceMappingURL=bundle.js.map", source_map_json()] {
-            let mut stream = accept_connection(&server);
-            let _ = read_request(&mut stream);
-            stream.write_all(response("200 OK", &[], body).as_bytes()).unwrap();
-        }
-    });
+    let received =
+        bundle_then_map(&listener, "console.log(1);\n//# sourceMappingURL=bundle.js.map");
     let output = tempfile::tempdir().unwrap();
 
     let out = srcmap()
@@ -1555,15 +1424,8 @@ fn fetch_security_bounds_redirects() {
     const EXPECTED_REQUESTS: usize = 11;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let server = listener.try_clone().unwrap();
-    let received = thread::spawn(move || {
-        for _ in 0..EXPECTED_REQUESTS {
-            let mut stream = accept_connection(&server);
-            let _ = read_request(&mut stream);
-            let reply = response("302 Found", &[("Location", "/loop")], "");
-            stream.write_all(reply.as_bytes()).unwrap();
-        }
-    });
+    let reply = response("302 Found", &[("Location", "/loop")], "");
+    let received = serve_sequence(listener.try_clone().unwrap(), vec![reply; EXPECTED_REQUESTS]);
     let output = tempfile::tempdir().unwrap();
 
     let out = srcmap()
@@ -1580,8 +1442,7 @@ fn fetch_security_bounds_redirects() {
 #[test]
 fn fetch_security_times_out_slow_response() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let inline = "console.log(1);\n//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IiJ9";
-    let slow_reply = response("200 OK", &[], inline);
+    let slow_reply = response("200 OK", &[], INLINE_MAP_BUNDLE);
     let accepted =
         serve_once(listener.try_clone().unwrap(), slow_reply, Duration::from_millis(1_500));
     let output = tempfile::tempdir().unwrap();
@@ -1624,14 +1485,7 @@ fn fetch_security_uses_one_deadline_across_redirects() {
         let replies = [
             (response("302 Found", &[("Location", "/two")], ""), Duration::from_millis(350)),
             (response("302 Found", &[("Location", "/final.js")], ""), Duration::from_millis(350)),
-            (
-                response(
-                    "200 OK",
-                    &[],
-                    "console.log(1);\n//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IiJ9",
-                ),
-                Duration::from_millis(100),
-            ),
+            (response("200 OK", &[], INLINE_MAP_BUNDLE), Duration::from_millis(100)),
         ];
         for (index, (reply, delay)) in replies.into_iter().enumerate() {
             let mut stream = loop {
@@ -1684,25 +1538,6 @@ fn fetch_security_uses_one_deadline_across_redirects() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("timed out"));
 }
 
-// ── schema includes new commands ─────────────────────────────
-
-#[test]
-fn schema_includes_new_commands() {
-    let out = srcmap().arg("schema").output().unwrap();
-    assert!(out.status.success());
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    let commands = v["commands"].as_array().unwrap();
-    let names: Vec<&str> = commands.iter().map(|c| c["name"].as_str().unwrap()).collect();
-    assert!(names.contains(&"fetch"));
-    assert!(names.contains(&"sources"));
-
-    let fetch = commands.iter().find(|command| command["name"] == "fetch").unwrap();
-    assert_eq!(fetch["flags"]["--allow-cross-origin"]["type"], "bool");
-    assert_eq!(fetch["flags"]["--allow-cross-origin"]["default"], false);
-}
-
-// ── error handling ───────────────────────────────────────────────
-
 #[test]
 fn missing_file_error() {
     let out = srcmap().args(["info", "/nonexistent/path/to/file.map"]).output().unwrap();
@@ -1719,23 +1554,10 @@ fn missing_file_json_error() {
     assert_eq!(v["code"], "IO_ERROR");
 }
 
-// ── stdin support ────────────────────────────────────────────────
-
 #[test]
 fn info_from_stdin() {
     let map_content = fs::read(fixture("simple.js.map")).unwrap();
-    let out = srcmap()
-        .args(["info", "-", "--json"])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            child.stdin.take().unwrap().write_all(&map_content).unwrap();
-            child.wait_with_output()
-        })
-        .unwrap();
+    let out = run_with_stdin(&["info", "-", "--json"], &map_content);
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["sources"], 2);
@@ -1743,18 +1565,7 @@ fn info_from_stdin() {
 
 #[test]
 fn decode_from_stdin() {
-    let out = srcmap()
-        .arg("decode")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            child.stdin.take().unwrap().write_all(b"AAAA").unwrap();
-            child.wait_with_output()
-        })
-        .unwrap();
+    let out = run_with_stdin(&["decode"], b"AAAA");
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v[0][0], serde_json::json!([0, 0, 0, 0]));
