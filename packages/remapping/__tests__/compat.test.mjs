@@ -7,15 +7,11 @@ import assert from "node:assert/strict";
 import srcmapRemapping from "../src/remapping.mjs";
 import jrRemapping from "@jridgewell/remapping";
 
-// ── Helper ───────────────────────────────────────────────────────
-
 const compareMaps = (srcmapResult, jrResult, label) => {
   assert.deepEqual(srcmapResult.sources, jrResult.sources, `${label}: sources mismatch`);
   assert.equal(srcmapResult.mappings, jrResult.mappings, `${label}: mappings mismatch`);
   assert.deepEqual(srcmapResult.names, jrResult.names, `${label}: names mismatch`);
 };
-
-// ── Cross-validation ─────────────────────────────────────────────
 
 describe("cross-validation with @jridgewell/remapping", () => {
   it("simple chain produces identical output", () => {

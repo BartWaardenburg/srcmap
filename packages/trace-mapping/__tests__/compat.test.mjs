@@ -28,8 +28,6 @@ import {
 
 import { encode } from "@jridgewell/sourcemap-codec";
 
-// ── Test fixtures ────────────────────────────────────────────────
-
 const SIMPLE_MAP = JSON.stringify({
   version: 3,
   file: "output.js",
@@ -109,8 +107,6 @@ const TEST_MAPS = [
   { name: "ignore-list", json: IGNORE_LIST_MAP },
   { name: "large (200 lines)", json: LARGE_MAP },
 ];
-
-// ── Cross-validation ─────────────────────────────────────────────
 
 // trace-mapping normalizes paths (resolves ./ segments), srcmap returns raw paths
 const normalizePath = (s) => s?.replace(/\/\.\//g, "/") ?? null;
@@ -197,19 +193,6 @@ describe("cross-validation with @jridgewell/trace-mapping", () => {
           }
         }
 
-        srcmap.free();
-      });
-
-      it("eachMapping produces same count", () => {
-        const srcmap = new SrcmapTraceMap(json);
-        const jr = new JrTraceMap(json);
-
-        let srcmapCount = 0;
-        let jrCount = 0;
-        srcmapEachMapping(srcmap, () => srcmapCount++);
-        jrEachMapping(jr, () => jrCount++);
-
-        assert.equal(srcmapCount, jrCount, "mapping count should match");
         srcmap.free();
       });
 

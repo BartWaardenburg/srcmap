@@ -7,7 +7,6 @@ set -euo pipefail
 VERSION="${2:-$1}"
 ROOT="$(git rev-parse --show-toplevel)"
 
-# Use node to safely update version fields in package.json files.
 # When requested, also rewrite any internal @srcmap dependency versions so the
 # published npm packages stay aligned with the workspace release version.
 update_package_json() {
@@ -48,8 +47,7 @@ NODE
 # These are the releaseable JS/WASM packages plus their versioned optional deps.
 for pkg in "$ROOT"/packages/*/package.json; do
   [ -f "$pkg" ] || continue
-  update_internal_deps=true
-  update_package_json "$pkg" "$update_internal_deps"
+  update_package_json "$pkg" true
   echo "  Updated $(basename "$(dirname "$pkg")")/package.json → $VERSION"
 done
 
