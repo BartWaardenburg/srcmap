@@ -17,18 +17,18 @@ const bindingKind = (pkg) => {
 
 const cargoPublishIsDisabled = (pkg) => Array.isArray(pkg.publish) && pkg.publish.length === 0;
 
-const releaseSteps = (workflow) => workflow.split(/\n {6}- name:/);
-
 const hasReleasePath = (pkg, workflow, rootPath) => {
   const kind = bindingKind(pkg);
   const packagePath = relative(rootPath, dirname(pkg.manifest_path)).replaceAll("\\", "/");
   const buildCommand = kind === "napi" ? "napi build" : "wasm-pack build";
 
-  return releaseSteps(workflow).some(
-    (step) =>
-      step.includes(buildCommand) &&
-      (step.includes(`cd ${packagePath}`) || step.includes(`working-directory: ${packagePath}`)),
-  );
+  return workflow
+    .split(/\n {6}- name:/)
+    .some(
+      (step) =>
+        step.includes(buildCommand) &&
+        (step.includes(`cd ${packagePath}`) || step.includes(`working-directory: ${packagePath}`)),
+    );
 };
 
 export const findUnclassifiedBindings = ({ packages, releaseWorkflow, rootPath }) =>

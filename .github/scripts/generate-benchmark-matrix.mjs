@@ -76,15 +76,7 @@ const SHARDS = {
   }),
 };
 
-const allShards = () => [
-  SHARDS.codec,
-  SHARDS.codecParallel,
-  SHARDS.sourcemap,
-  SHARDS.generator,
-  SHARDS.generatorParallel,
-  SHARDS.remapping,
-  SHARDS.packages,
-];
+const ALL_SHARDS = Object.values(SHARDS);
 
 const commandOutput = (command, args) => {
   try {
@@ -120,14 +112,10 @@ const changedFilesForEvent = () => {
   return null;
 };
 
-const includeShard = (selected, shard) => {
-  selected.set(shard.label, shard);
-};
-
 const selectShards = (files) => {
-  if (files === null) return allShards();
+  if (files === null) return ALL_SHARDS;
 
-  const selected = new Map();
+  const selected = new Set();
 
   for (const file of files) {
     if (
@@ -139,34 +127,29 @@ const selectShards = (files) => {
       file === "pnpm-lock.yaml" ||
       file === "pnpm-workspace.yaml"
     ) {
-      return allShards();
+      return ALL_SHARDS;
     }
 
     if (file.startsWith("crates/codec/")) {
-      includeShard(selected, SHARDS.codec);
-      includeShard(selected, SHARDS.codecParallel);
+      selected.add(SHARDS.codec);
+      selected.add(SHARDS.codecParallel);
     }
-    if (file.startsWith("crates/sourcemap/")) includeShard(selected, SHARDS.sourcemap);
+    if (file.startsWith("crates/sourcemap/")) selected.add(SHARDS.sourcemap);
     if (file.startsWith("crates/generator/")) {
-      includeShard(selected, SHARDS.generator);
-      includeShard(selected, SHARDS.generatorParallel);
+      selected.add(SHARDS.generator);
+      selected.add(SHARDS.generatorParallel);
     }
-    if (file.startsWith("crates/remapping/")) includeShard(selected, SHARDS.remapping);
-    if (file.startsWith("benchmarks/download-fixtures.mjs")) {
-      includeShard(selected, SHARDS.sourcemap);
-      includeShard(selected, SHARDS.remapping);
-      includeShard(selected, SHARDS.packages);
+    if (file.startsWith("crates/remapping/")) selected.add(SHARDS.remapping);
+    if (file === "benchmarks/download-fixtures.mjs") {
+      selected.add(SHARDS.sourcemap);
+      selected.add(SHARDS.remapping);
     }
-    if (
-      file.startsWith("benchmarks/") ||
-      file.startsWith("packages/") ||
-      file === "benchmarks/package.json"
-    ) {
-      includeShard(selected, SHARDS.packages);
+    if (file.startsWith("benchmarks/") || file.startsWith("packages/")) {
+      selected.add(SHARDS.packages);
     }
   }
 
-  return selected.size === 0 ? allShards() : [...selected.values()];
+  return selected.size === 0 ? ALL_SHARDS : [...selected];
 };
 
 const include = selectShards(changedFilesForEvent());

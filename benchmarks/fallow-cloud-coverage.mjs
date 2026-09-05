@@ -1,15 +1,10 @@
 import { createBench, latencyMeanMs, throughputHz } from "./codspeed.mjs";
 import { TraceMap, originalPositionFor } from "@jridgewell/trace-mapping";
-import { createRequire } from "node:module";
 import { encode } from "@jridgewell/sourcemap-codec";
 import { SourceMap as NapiSourceMap } from "../packages/sourcemap/index.js";
 import { GeneratedOffsetLookup } from "../packages/sourcemap-wasm/coverage.mjs";
+import { SourceMap as WasmSourceMap } from "../packages/sourcemap-wasm/pkg/srcmap_sourcemap_wasm.js";
 
-const require = createRequire(import.meta.url);
-const wasmSourceMapModule = "../packages/sourcemap-wasm/pkg/srcmap_sourcemap_wasm.js";
-const { SourceMap: WasmSourceMap } = require(wasmSourceMapModule);
-
-const MAP_URL = "https://cdn.fallow-cloud.test/assets/app.js.map";
 const MAP_LINE_COUNT = 6000;
 const SEGS_PER_LINE = 18;
 const SOURCE_COUNT = 24;
@@ -98,12 +93,7 @@ function buildBeaconBatches(lineStartOffsets) {
       offsets[i] = lineStartOffsets[line] + column;
     }
 
-    return {
-      beaconId: `coverage-${String(beaconIndex).padStart(4, "0")}`,
-      mapUrl: MAP_URL,
-      receivedAt: `2026-04-13T00:${String(beaconIndex % 60).padStart(2, "0")}:00.000Z`,
-      offsets,
-    };
+    return { offsets };
   });
 }
 
@@ -111,51 +101,32 @@ const fixture = buildLargeCoverageMap();
 const generated = buildGeneratedCode();
 const beacons = buildBeaconBatches(generated.lineStartOffsets);
 
-const mapCache = new Map();
+const cachedMaps = {
+  trace: new TraceMap(fixture.json),
+  wasm: new WasmSourceMap(fixture.json),
+  napi: new NapiSourceMap(fixture.json),
+  offsetLookup: new GeneratedOffsetLookup(generated.code),
+};
 
-function getCachedMaps(mapUrl) {
-  let entry = mapCache.get(mapUrl);
-  if (entry) return entry;
-
-  entry = {
-    trace: new TraceMap(fixture.json),
-    wasm: new WasmSourceMap(fixture.json),
-    napi: new NapiSourceMap(fixture.json),
-    offsetLookup: new GeneratedOffsetLookup(generated.code),
-  };
-
-  mapCache.set(mapUrl, entry);
-  return entry;
-}
-
-function verifyBatchResults(entry, beacon, resolvePosition) {
-  const generatedPositions = entry.offsetLookup.generatedPositionsFor(beacon.offsets);
+function verifyBatchResults(beacon, resolvePosition) {
+  const generatedPositions = cachedMaps.offsetLookup.generatedPositionsFor(beacon.offsets);
 
   for (let i = 0; i < generatedPositions.length; i += 2) {
     const line = generatedPositions[i];
     const column = generatedPositions[i + 1];
-    const expected = originalPositionFor(entry.trace, { line: line + 1, column });
+    const expected = originalPositionFor(cachedMaps.trace, { line: line + 1, column });
     const actual = resolvePosition(line, column);
-    const expectedSource = expected.source ?? null;
-    const expectedLine = expected.line ?? null;
-    const expectedColumn = expected.column ?? null;
-    const expectedName = expected.name ?? null;
 
-    if (expectedSource === null) {
+    if (expected.source === null) {
       if (actual !== null) return false;
       continue;
     }
 
-    const actualSource = actual?.source ?? null;
-    const actualLine = actual?.line ?? null;
-    const actualColumn = actual?.column ?? null;
-    const actualName = actual?.name ?? null;
-
     if (
-      actualSource !== expectedSource ||
-      actualLine !== expectedLine - 1 ||
-      actualColumn !== expectedColumn ||
-      actualName !== expectedName
+      (actual?.source ?? null) !== expected.source ||
+      (actual?.line ?? null) !== expected.line - 1 ||
+      (actual?.column ?? null) !== expected.column ||
+      (actual?.name ?? null) !== expected.name
     ) {
       return false;
     }
@@ -164,38 +135,32 @@ function verifyBatchResults(entry, beacon, resolvePosition) {
   return true;
 }
 
-function verifyBulkResults(entry, beacon, actualResults) {
-  const generatedPositions = entry.offsetLookup.generatedPositionsFor(beacon.offsets);
+function verifyBulkResults(beacon, actualResults) {
+  const generatedPositions = cachedMaps.offsetLookup.generatedPositionsFor(beacon.offsets);
 
   for (let i = 0; i < generatedPositions.length; i += 2) {
-    const expected = originalPositionFor(entry.trace, {
+    const expected = originalPositionFor(cachedMaps.trace, {
       line: generatedPositions[i] + 1,
       column: generatedPositions[i + 1],
     });
     const base = i * 2;
-    const expectedSource = expected.source ?? null;
-    const expectedLine = expected.line ?? null;
-    const expectedColumn = expected.column ?? null;
-    const expectedName = expected.name ?? null;
 
-    if (expectedSource === null) {
+    if (expected.source === null) {
       if (actualResults[base] !== -1) return false;
       continue;
     }
 
     const actualSourceIndex = actualResults[base];
-    const actualLine = actualResults[base + 1];
-    const actualColumn = actualResults[base + 2];
     const actualNameIndex = actualResults[base + 3];
     const actualSource =
       actualSourceIndex === -1 ? null : (fixture.sources[actualSourceIndex] ?? null);
     const actualName = actualNameIndex === -1 ? null : (fixture.names[actualNameIndex] ?? null);
 
     if (
-      actualSource !== expectedSource ||
-      actualLine !== expectedLine - 1 ||
-      actualColumn !== expectedColumn ||
-      actualName !== expectedName
+      actualSource !== expected.source ||
+      actualResults[base + 1] !== expected.line - 1 ||
+      actualResults[base + 2] !== expected.column ||
+      actualName !== expected.name
     ) {
       return false;
     }
@@ -213,8 +178,6 @@ console.log(
   `Fixture map: ${fixture.json.length.toLocaleString()} bytes, ${MAP_LINE_COUNT} lines, ${SEGS_PER_LINE * MAP_LINE_COUNT} segments\n`,
 );
 
-const cachedMaps = getCachedMaps(MAP_URL);
-
 console.log("--- Correctness Check ---\n");
 
 let wasmPass = true;
@@ -224,22 +187,17 @@ let napiBatchPass = true;
 
 for (const beacon of beacons.slice(0, 8)) {
   if (
-    !verifyBatchResults(cachedMaps, beacon, (line, column) =>
-      cachedMaps.wasm.originalPositionFor(line, column),
-    )
+    !verifyBatchResults(beacon, (line, column) => cachedMaps.wasm.originalPositionFor(line, column))
   ) {
     wasmPass = false;
   }
   if (
-    !verifyBatchResults(cachedMaps, beacon, (line, column) =>
-      cachedMaps.napi.originalPositionFor(line, column),
-    )
+    !verifyBatchResults(beacon, (line, column) => cachedMaps.napi.originalPositionFor(line, column))
   ) {
     napiPass = false;
   }
   if (
     !verifyBulkResults(
-      cachedMaps,
       beacon,
       cachedMaps.offsetLookup.originalPositionsFor(cachedMaps.wasm, beacon.offsets),
     )
@@ -248,7 +206,6 @@ for (const beacon of beacons.slice(0, 8)) {
   }
   if (
     !verifyBulkResults(
-      cachedMaps,
       beacon,
       cachedMaps.offsetLookup.originalPositionsFor(cachedMaps.napi, beacon.offsets),
     )

@@ -1,56 +1,11 @@
 import { createBench, latencyMeanMs, latencyP99Ms, throughputHz } from "./codspeed.mjs";
+import { generateSourceMap } from "./workload.mjs";
 import { TraceMap, originalPositionFor } from "@jridgewell/trace-mapping";
-import { SourceMap } from "../packages/sourcemap-wasm/pkg/srcmap_sourcemap_wasm.js";
-import { createRequire } from "node:module";
-const require = createRequire(import.meta.url);
-const sourcemapWasm = require("../packages/sourcemap-wasm/pkg/srcmap_sourcemap_wasm.js");
-const { LazySourceMap: FastSourceMap } = sourcemapWasm;
+import {
+  LazySourceMap as FastSourceMap,
+  SourceMap,
+} from "../packages/sourcemap-wasm/pkg/srcmap_sourcemap_wasm.js";
 import { SourceMap as NapiSourceMap } from "../packages/sourcemap/index.js";
-import { encode } from "@jridgewell/sourcemap-codec";
-
-// ── Generate realistic source maps ────────────────────────────────
-
-function generateSourceMap(lines, segsPerLine, numSources) {
-  const sources = Array.from({ length: numSources }, (_, i) => `src/file${i}.js`);
-  const names = Array.from({ length: 20 }, (_, i) => `var${i}`);
-  const sourcesContent = sources.map(
-    (_, i) => `// source file ${i}\n${"const x = 1;\n".repeat(lines)}`,
-  );
-
-  const mappings = [];
-  let src = 0,
-    srcLine = 0,
-    srcCol = 0,
-    name = 0;
-
-  for (let line = 0; line < lines; line++) {
-    const lineSegs = [];
-    let genCol = 0;
-
-    for (let s = 0; s < segsPerLine; s++) {
-      genCol += 2 + ((s * 3) % 20);
-      if (s % 7 === 0) src = (src + 1) % numSources;
-      srcLine += 1;
-      srcCol = (s * 5 + 1) % 30;
-
-      if (s % 4 === 0) {
-        name = (name + 1) % names.length;
-        lineSegs.push([genCol, src, srcLine, srcCol, name]);
-      } else {
-        lineSegs.push([genCol, src, srcLine, srcCol]);
-      }
-    }
-    mappings.push(lineSegs);
-  }
-
-  return JSON.stringify({
-    version: 3,
-    sources,
-    sourcesContent,
-    names,
-    mappings: encode(mappings),
-  });
-}
 
 const MEDIUM_JSON = generateSourceMap(500, 20, 5);
 const LARGE_JSON = generateSourceMap(2000, 50, 10);
@@ -61,8 +16,6 @@ const maps = [
 ];
 
 console.log("=== WASM vs NAPI vs trace-mapping ===\n");
-
-// ── Correctness check ──────────────────────────────────────────────
 
 console.log("Verifying WASM correctness...");
 for (const { name, json } of maps) {
@@ -99,8 +52,6 @@ for (const { name, json } of maps) {
   console.log(`  ${name}: ${pass ? "PASS" : "FAIL"} (${checked} lookups)`);
 }
 
-// ── Parse benchmarks ──────────────────────────────────────────────
-
 console.log("\n--- Parse Benchmarks ---\n");
 
 for (const { name, json } of maps) {
@@ -125,8 +76,6 @@ for (const { name, json } of maps) {
   );
 }
 
-// ── Single lookup benchmarks ──────────────────────────────────────
-
 console.log("\n--- Single Lookup ---\n");
 
 {
@@ -141,10 +90,7 @@ console.log("\n--- Single Lookup ---\n");
     .add("trace-mapping", () => originalPositionFor(trace, { line: 251, column: 30 }))
     .add("srcmap WASM", () => wasm.originalPositionFor(250, 30))
     .add("srcmap WASM (flat)", () => wasm.originalPositionFlat(250, 30))
-    .add("srcmap WASM (buf)", () => {
-      wasm.originalPositionBuf(250, 30);
-      // resultView[0..3] contains: sourceIdx, line, column, nameIdx
-    })
+    .add("srcmap WASM (buf)", () => wasm.originalPositionBuf(250, 30))
     .add("srcmap NAPI", () => napi.originalPositionFor(250, 30));
 
   await bench.run();
@@ -158,8 +104,6 @@ console.log("\n--- Single Lookup ---\n");
     })),
   );
 }
-
-// ── 1000x lookup benchmarks ──────────────────────────────────────
 
 console.log("\n--- 1000x Lookup ---\n");
 

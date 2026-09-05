@@ -12,7 +12,6 @@ import {
   encodeBuf as srcmapEncodeBuf,
 } from "../packages/codec/index.js";
 
-// Test mappings of increasing complexity
 const SMALL_MAP = "AAAA;AACA,GAAG;AACA,IAAI,EAAE";
 const MEDIUM_MAP = Array.from({ length: 100 }, () => "AAAA,GAAG,EAAE,IAAI,KAAK").join(";");
 const LARGE_MAP = Array.from({ length: 1000 }, () =>
@@ -25,7 +24,6 @@ const maps = [
   { name: "large (1000 lines, 50K segments)", mappings: LARGE_MAP },
 ];
 
-// Verify correctness for all approaches
 console.log("Verifying correctness...\n");
 for (const { name, mappings } of maps) {
   const reference = jridgewellDecode(mappings);
@@ -45,7 +43,6 @@ for (const { name, mappings } of maps) {
   console.log(`  JSON decode:   ${jsonMatch ? "PASS" : "FAIL"}`);
   console.log(`  Buffer decode: ${bufMatch ? "PASS" : "FAIL"}`);
 
-  // Verify encode
   const refEncoded = jridgewellEncode(reference);
   const napiEncoded = srcmapEncode(napiResult);
   const jsonEncoded = srcmapEncodeJson(jsonResult);

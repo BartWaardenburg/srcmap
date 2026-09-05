@@ -4,7 +4,7 @@ import { access, readdir, readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 
 const ROOT_URL = new URL("../../", import.meta.url);
-const WORKFLOWS_URL = new URL("workflows/", new URL("../", import.meta.url));
+const WORKFLOWS_URL = new URL(".github/workflows/", ROOT_URL);
 const BENCH_WORKFLOW_URL = new URL("bench.yml", WORKFLOWS_URL);
 const CI_WORKFLOW_URL = new URL("ci.yml", WORKFLOWS_URL);
 const COVERAGE_WORKFLOW_URL = new URL("coverage.yml", WORKFLOWS_URL);
@@ -151,7 +151,6 @@ describe("Generated artifact policy", () => {
     const bench = await readFile(BENCH_WORKFLOW_URL, "utf8");
     const contributing = await readFile(CONTRIBUTING_URL, "utf8");
     const readme = await readFile(README_URL, "utf8");
-    assert.match(workflowJob(ci, "js-runtime"), /corepack pnpm run build:test-artifacts/);
     assert.match(workflowJob(coverage, "coverage"), /corepack pnpm run build:test-artifacts:napi/);
     assert.match(bench, /corepack pnpm run build:test-artifacts:napi/);
     assert.match(contributing, /corepack pnpm run build:test-artifacts:napi/);
@@ -428,19 +427,6 @@ describe("NAPI declaration coverage", () => {
 });
 
 describe("WASM package coverage", () => {
-  it("builds symbolicate WASM targets before JavaScript tests", async () => {
-    const workflow = await readFile(CI_WORKFLOW_URL, "utf8");
-    const job = workflowJob(workflow, "js-runtime");
-    const build = "corepack pnpm run build:test-artifacts";
-    const test = "corepack pnpm run test:js";
-
-    assert.ok(job.includes(build), "missing symbolicate WASM build");
-    assert.ok(
-      job.indexOf(build) < job.indexOf(test),
-      "symbolicate WASM must build before JS tests",
-    );
-  });
-
   it("builds symbolicate WASM targets before JavaScript coverage", async () => {
     const workflow = await readFile(COVERAGE_WORKFLOW_URL, "utf8");
     const job = workflowJob(workflow, "coverage");

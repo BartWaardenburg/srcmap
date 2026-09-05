@@ -6,11 +6,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { TraceMap, originalPositionFor } from "@jridgewell/trace-mapping";
 import { SourceMapConsumer } from "source-map-js";
-import { SourceMap } from "../packages/sourcemap-wasm/pkg/srcmap_sourcemap_wasm.js";
-import { createRequire } from "node:module";
-const require = createRequire(import.meta.url);
-const sourcemapWasm = require("../packages/sourcemap-wasm/pkg/srcmap_sourcemap_wasm.js");
-const { LazySourceMap: FastSourceMap } = sourcemapWasm;
+import {
+  LazySourceMap as FastSourceMap,
+  SourceMap,
+} from "../packages/sourcemap-wasm/pkg/srcmap_sourcemap_wasm.js";
 import { SourceMap as NapiSourceMap } from "../packages/sourcemap/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -18,6 +17,7 @@ const fixturesDir = join(__dirname, "fixtures");
 const LOOKUP_COUNT = 1_000;
 const LOOKUP_MAX_COLUMN = 200;
 const LOOKUP_SEED = 0x5eed1234;
+const MEGABYTE = 1024 * 1024;
 
 const createOrderedLookups = (count, maxLine, descending) =>
   Array.from({ length: count }, (_, index) => {
@@ -71,8 +71,6 @@ const consumeLookups = (map, lookups) => {
 
 let lookupChecksum = 0;
 
-// ── Load fixtures ────────────────────────────────────────────────
-
 const FIXTURES = [
   { name: "Preact", file: "preact.js.map" },
   { name: "Chart.js", file: "chartjs.js.map" },
@@ -102,13 +100,12 @@ for (const fixture of FIXTURES) {
     name: fixture.name,
     json,
     size: json.length,
+    large: json.length > MEGABYTE,
     lines,
     segments,
     sources: parsed.sources?.length || 0,
   });
 }
-
-// ── Header ───────────────────────────────────────────────────────
 
 console.log("=== Real-World Source Map Benchmarks ===\n");
 console.log("Libraries:");
@@ -119,20 +116,16 @@ console.log("  srcmap NAPI                - srcmap Rust core via N-API\n");
 
 console.log("Source maps:");
 for (const m of maps) {
-  const sizeStr =
-    m.size > 1024 * 1024
-      ? `${(m.size / 1024 / 1024).toFixed(1)} MB`
-      : `${(m.size / 1024).toFixed(0)} KB`;
+  const sizeStr = m.large
+    ? `${(m.size / MEGABYTE).toFixed(1)} MB`
+    : `${(m.size / 1024).toFixed(0)} KB`;
 
   console.log(
     `  ${m.name.padEnd(12)} ${sizeStr.padStart(8)}  ${String(m.segments).padStart(7)} segments  ${String(m.lines).padStart(6)} lines  ${m.sources} sources`,
   );
 }
 
-// ── Correctness check ────────────────────────────────────────────
-
-// trace-mapping normalizes source paths (resolves ./ segments),
-// srcmap returns raw paths. Normalize both for fair comparison.
+// trace-mapping resolves ./ segments in source paths, srcmap returns them raw
 const normalizePath = (s) => s?.replace(/\/\.\//g, "/") ?? null;
 
 console.log("\n--- Correctness Check ---\n");
@@ -158,7 +151,6 @@ for (const { name, json } of maps) {
       const expected = originalPositionFor(trace, { line: line + 1, column: col });
       const expectedNull = !expected.source;
 
-      // WASM
       const wr = wasm.originalPositionFor(line, col);
       if (expectedNull !== (wr === null)) wasmPass = false;
       else if (!expectedNull && wr !== null) {
@@ -170,7 +162,6 @@ for (const { name, json } of maps) {
           wasmPass = false;
       }
 
-      // NAPI
       const nr = napi.originalPositionFor(line, col);
       if (expectedNull !== (nr === null)) napiPass = false;
       else if (!expectedNull && nr !== null) {
@@ -194,16 +185,12 @@ for (const { name, json } of maps) {
 
 setFailureExitCode(correctnessResults);
 
-// ── Parse benchmarks ─────────────────────────────────────────────
-
 console.log("\n--- Parse ---\n");
 
-for (const { name, json, size } of maps) {
+for (const { name, json, large } of maps) {
   console.log(`### ${name}\n`);
 
-  // Fewer iterations for large maps
-  const iterations = size > 1024 * 1024 ? 50 : 200;
-  const bench = createBench({ warmupIterations: 10, iterations });
+  const bench = createBench({ warmupIterations: 10, iterations: large ? 50 : 200 });
   const prefix = `real_world_parse[${name}]`;
 
   bench
@@ -225,11 +212,9 @@ for (const { name, json, size } of maps) {
   );
 }
 
-// ── Fast-lazy cold map lookup order ─────────────────────────────
-
 console.log("\n--- Fast-Lazy Cold Map: Construct and First Lookup Pass ---\n");
 
-for (const { name, json, size, lines } of maps) {
+for (const { name, json, large, lines } of maps) {
   console.log(`### ${name}\n`);
 
   const eager = new SourceMap(json);
@@ -242,10 +227,9 @@ for (const { name, json, size, lines } of maps) {
   }
   eager.free();
 
-  const isLargeMap = size > 1024 * 1024;
   const bench = createBench({
-    warmupIterations: isLargeMap ? 2 : 5,
-    iterations: isLargeMap ? 10 : 50,
+    warmupIterations: large ? 2 : 5,
+    iterations: large ? 10 : 50,
   });
   const prefix = `real_world_lazy_lookup_cold_1000x[${name}]`;
 
@@ -271,11 +255,9 @@ for (const { name, json, size, lines } of maps) {
   );
 }
 
-// ── Fast-lazy warm cache lookup order ────────────────────────────
-
 console.log("\n--- Fast-Lazy Warm Cache: Reuse Decoded Lines ---\n");
 
-for (const { name, json, size, lines } of maps) {
+for (const { name, json, large, lines } of maps) {
   console.log(`### ${name}\n`);
 
   const patterns = createLookupPatterns(lines).map((pattern) => ({
@@ -287,10 +269,9 @@ for (const { name, json, size, lines } of maps) {
     lookupChecksum = (lookupChecksum + consumeLookups(pattern.map, pattern.lookups)) >>> 0;
   }
 
-  const isLargeMap = size > 1024 * 1024;
   const bench = createBench({
-    warmupIterations: isLargeMap ? 5 : 20,
-    iterations: isLargeMap ? 50 : 200,
+    warmupIterations: large ? 5 : 20,
+    iterations: large ? 50 : 200,
   });
   const prefix = `real_world_lazy_lookup_warm_1000x[${name}]`;
 
@@ -320,11 +301,9 @@ for (const { name, json, size, lines } of maps) {
 
 console.log(`Lookup checksum: ${lookupChecksum}`);
 
-// ── Single lookup ────────────────────────────────────────────────
-
 console.log("\n--- Single Lookup ---\n");
 
-for (const { name, json, size } of maps) {
+for (const { name, json, large } of maps) {
   console.log(`### ${name}\n`);
 
   const trace = new TraceMap(json);
@@ -335,10 +314,9 @@ for (const { name, json, size } of maps) {
   // Pick a lookup position roughly in the middle of the map
   const midLine = Math.floor(wasm.lineCount / 2);
 
-  const isLargeMap = size > 1024 * 1024;
   const bench = createBench({
-    warmupIterations: isLargeMap ? 50 : 500,
-    iterations: isLargeMap ? 500 : 5000,
+    warmupIterations: large ? 50 : 500,
+    iterations: large ? 500 : 5000,
   });
   const prefix = `real_world_lookup_single[${name}]`;
 
@@ -368,11 +346,9 @@ for (const { name, json, size } of maps) {
   );
 }
 
-// ── Batch lookup (1000x) ─────────────────────────────────────────
-
 console.log("\n--- 1000x Lookup ---\n");
 
-for (const { name, json, size } of maps) {
+for (const { name, json, large } of maps) {
   console.log(`### ${name}\n`);
 
   const trace = new TraceMap(json);
@@ -385,10 +361,9 @@ for (const { name, json, size } of maps) {
   const flatPositions = lookups.flatMap(({ line, column }) => [line, column]);
   const posArray = new Int32Array(flatPositions);
 
-  const isLargeMap = size > 1024 * 1024;
   const bench = createBench({
-    warmupIterations: isLargeMap ? 5 : 20,
-    iterations: isLargeMap ? 50 : 200,
+    warmupIterations: large ? 5 : 20,
+    iterations: large ? 50 : 200,
   });
   const prefix = `real_world_lookup_1000x[${name}]`;
 

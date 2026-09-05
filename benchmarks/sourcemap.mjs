@@ -1,51 +1,7 @@
 import { createBench, latencyMeanMs, latencyP99Ms, throughputHz } from "./codspeed.mjs";
+import { generateSourceMap } from "./workload.mjs";
 import { TraceMap, originalPositionFor } from "@jridgewell/trace-mapping";
 import { SourceMap } from "../packages/sourcemap/index.js";
-import { encode } from "@jridgewell/sourcemap-codec";
-
-// ── Generate realistic source maps ────────────────────────────────
-
-function generateSourceMap(lines, segsPerLine, numSources) {
-  const sources = Array.from({ length: numSources }, (_, i) => `src/file${i}.js`);
-  const names = Array.from({ length: 20 }, (_, i) => `var${i}`);
-  const sourcesContent = sources.map(
-    (_, i) => `// source file ${i}\n${"const x = 1;\n".repeat(lines)}`,
-  );
-
-  const mappings = [];
-  let src = 0,
-    srcLine = 0,
-    srcCol = 0,
-    name = 0;
-
-  for (let line = 0; line < lines; line++) {
-    const lineSegs = [];
-    let genCol = 0;
-
-    for (let s = 0; s < segsPerLine; s++) {
-      genCol += 2 + ((s * 3) % 20);
-      if (s % 7 === 0) src = (src + 1) % numSources;
-      srcLine += 1;
-      srcCol = (s * 5 + 1) % 30;
-
-      if (s % 4 === 0) {
-        name = (name + 1) % names.length;
-        lineSegs.push([genCol, src, srcLine, srcCol, name]);
-      } else {
-        lineSegs.push([genCol, src, srcLine, srcCol]);
-      }
-    }
-    mappings.push(lineSegs);
-  }
-
-  return JSON.stringify({
-    version: 3,
-    sources,
-    sourcesContent,
-    names,
-    mappings: encode(mappings),
-  });
-}
 
 const SMALL_JSON = generateSourceMap(50, 10, 3);
 const MEDIUM_JSON = generateSourceMap(500, 20, 5);
@@ -60,8 +16,6 @@ const maps = [
 console.log(
   `JSON sizes: small=${(SMALL_JSON.length / 1024).toFixed(1)}KB, medium=${(MEDIUM_JSON.length / 1024).toFixed(1)}KB, large=${(LARGE_JSON.length / 1024).toFixed(1)}KB\n`,
 );
-
-// ── Correctness verification ──────────────────────────────────────
 
 console.log("Verifying correctness...\n");
 for (const { name, json } of maps) {
@@ -107,8 +61,6 @@ for (const { name, json } of maps) {
   console.log(`${name}: ${pass ? "PASS" : "FAIL"} (checked ${checked} lookups)`);
 }
 
-// ── Parse benchmarks ──────────────────────────────────────────────
-
 console.log("\n--- Parse Benchmarks ---\n");
 
 for (const { name, json } of maps) {
@@ -131,8 +83,6 @@ for (const { name, json } of maps) {
     })),
   );
 }
-
-// ── Lookup benchmarks ─────────────────────────────────────────────
 
 console.log("\n--- originalPositionFor Benchmarks ---\n");
 
@@ -177,8 +127,6 @@ for (const { name, json } of maps) {
   );
 }
 
-// ── Batch lookup benchmark ─────────────────────────────────────────
-
 console.log("\n--- Batch originalPositionFor (1000 lookups/call) ---\n");
 
 for (const { name, json } of maps) {
@@ -220,8 +168,6 @@ for (const { name, json } of maps) {
     })),
   );
 }
-
-// ── Single lookup benchmark ────────────────────────────────────────
 
 console.log("\n--- Single originalPositionFor ---\n");
 

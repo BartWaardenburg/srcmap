@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -9,10 +9,7 @@ const ROOT_URL = new URL("../../", import.meta.url);
 const SCRIPT_URL = new URL(".github/scripts/publish-crate-if-needed.sh", ROOT_URL);
 const WORKFLOW_URL = new URL(".github/workflows/release.yml", ROOT_URL);
 
-const writeExecutable = async (path, contents) => {
-  await writeFile(path, contents);
-  await chmod(path, 0o755);
-};
+const writeExecutable = (path, contents) => writeFile(path, contents, { mode: 0o755 });
 
 const runPublishHelper = async ({ lookup = "existing", publishExit = 0 } = {}) => {
   const directory = await mkdtemp(join(tmpdir(), "srcmap-publish-test-"));
@@ -64,11 +61,7 @@ fi
       `#!/usr/bin/env bash
 set -eu
 printf 'jq %s\\n' "$*" >> "$COMMAND_LOG"
-if [[ "$*" == *'.packages[]'* ]]; then
-  printf '1.2.3\\n'
-  exit 0
-fi
-if [[ "$*" == *'.version.num'* ]]; then
+if [[ "$*" == *'.packages[]'* || "$*" == *'.version.num'* ]]; then
   printf '1.2.3\\n'
   exit 0
 fi
@@ -79,7 +72,7 @@ exit 1
 
   const result = await new Promise((resolve, reject) => {
     const child = spawn("bash", [SCRIPT_URL.pathname, "srcmap-codec"], {
-      cwd: new URL("../..", import.meta.url).pathname,
+      cwd: ROOT_URL.pathname,
       env: {
         ...process.env,
         COMMAND_LOG: logPath,
