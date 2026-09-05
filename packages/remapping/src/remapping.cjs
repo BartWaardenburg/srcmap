@@ -1,18 +1,8 @@
 "use strict";
 
-let wasmRemap;
-try {
-  wasmRemap = require("@srcmap/remapping-wasm").remap;
-} catch {
-  // Fallback for monorepo development
-  wasmRemap = require("../../remapping-wasm/pkg/srcmap_remapping_wasm.js").remap;
-}
+const { remap: wasmRemap } = require("@srcmap/remapping-wasm");
 
-// ── SourceMap class ─────────────────────────────────────────────
-
-/**
- * Source map result class with the same interface as @jridgewell/remapping's SourceMap.
- */
+/** Result class with the same interface as @jridgewell/remapping's SourceMap. */
 class SourceMap {
   constructor(raw) {
     this.version = raw.version;
@@ -47,8 +37,6 @@ class SourceMap {
     return result;
   }
 }
-
-// ── Helpers ──────────────────────────────────────────────────────
 
 const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -126,8 +114,6 @@ const remapArray = (maps, loader) => {
 
   return wasmRemap(current, wrapLoader(loader));
 };
-
-// ── Main API ────────────────────────────────────────────────────
 
 const remapping = (input, loader, _options) => {
   let resultJson;

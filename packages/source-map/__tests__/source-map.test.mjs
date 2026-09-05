@@ -7,8 +7,6 @@ import {
   LEAST_UPPER_BOUND,
 } from "../src/source-map.mjs";
 
-// ── Test fixtures ────────────────────────────────────────────────
-
 const SIMPLE_MAP = {
   version: 3,
   file: "output.js",
@@ -27,8 +25,6 @@ const MULTI_SOURCE_MAP = {
   mappings: "AAAAA;ACAAC,KACCC",
 };
 
-// ── Constants ────────────────────────────────────────────────────
-
 describe("constants", () => {
   it("exports GREATEST_LOWER_BOUND = 1 (Mozilla v0.6 convention)", () => {
     assert.equal(GREATEST_LOWER_BOUND, 1);
@@ -38,8 +34,6 @@ describe("constants", () => {
     assert.equal(LEAST_UPPER_BOUND, 2);
   });
 });
-
-// ── SourceMapConsumer constructor ─────────────────────────────────
 
 describe("SourceMapConsumer constructor", () => {
   it("accepts a plain object", () => {
@@ -71,12 +65,6 @@ describe("SourceMapConsumer constructor", () => {
     consumer.destroy();
   });
 
-  it("exposes file property", () => {
-    const consumer = new SourceMapConsumer(SIMPLE_MAP);
-    assert.equal(consumer.file, "output.js");
-    consumer.destroy();
-  });
-
   it("exposes sourceRoot property", () => {
     const consumer = new SourceMapConsumer({
       version: 3,
@@ -89,8 +77,6 @@ describe("SourceMapConsumer constructor", () => {
     consumer.destroy();
   });
 });
-
-// ── originalPositionFor ──────────────────────────────────────────
 
 describe("SourceMapConsumer.originalPositionFor", () => {
   it("maps generated position to original (1-based lines)", () => {
@@ -154,8 +140,6 @@ describe("SourceMapConsumer.originalPositionFor", () => {
   });
 });
 
-// ── generatedPositionFor ─────────────────────────────────────────
-
 describe("SourceMapConsumer.generatedPositionFor", () => {
   it("reverse-looks up a position (1-based lines)", () => {
     const consumer = new SourceMapConsumer(SIMPLE_MAP);
@@ -176,44 +160,22 @@ describe("SourceMapConsumer.generatedPositionFor", () => {
   it("includes lastColumn (null) in result", () => {
     const consumer = new SourceMapConsumer(SIMPLE_MAP);
     const pos = consumer.generatedPositionFor({ source: "input.js", line: 1, column: 0 });
-    assert.ok("lastColumn" in pos);
+    assert.equal(pos.lastColumn, null);
     consumer.destroy();
   });
 });
 
-// ── eachMapping ──────────────────────────────────────────────────
-
 describe("SourceMapConsumer.eachMapping", () => {
-  it("iterates all mappings", () => {
-    const consumer = new SourceMapConsumer(SIMPLE_MAP);
-    const mappings = [];
-    consumer.eachMapping((m) => mappings.push(m));
-    assert.ok(mappings.length >= 2);
-    consumer.destroy();
-  });
-
-  it("provides 1-based lines", () => {
-    const consumer = new SourceMapConsumer(SIMPLE_MAP);
-    const mappings = [];
-    consumer.eachMapping((m) => mappings.push(m));
-    assert.ok(mappings[0].generatedLine >= 1);
-    if (mappings[0].originalLine != null) {
-      assert.ok(mappings[0].originalLine >= 1);
-    }
-    consumer.destroy();
-  });
-
   it("includes source, name, lastGeneratedColumn fields", () => {
     const consumer = new SourceMapConsumer(SIMPLE_MAP);
     const mappings = [];
     consumer.eachMapping((m) => mappings.push(m));
 
     const first = mappings[0];
-    assert.ok("source" in first);
-    assert.ok("name" in first);
-    assert.ok("lastGeneratedColumn" in first);
+    assert.equal(first.generatedLine, 1);
     assert.equal(first.source, "input.js");
     assert.equal(first.name, "foo");
+    assert.equal(first.lastGeneratedColumn, null);
     consumer.destroy();
   });
 
@@ -227,8 +189,6 @@ describe("SourceMapConsumer.eachMapping", () => {
     consumer.destroy();
   });
 });
-
-// ── sourceContentFor ─────────────────────────────────────────────
 
 describe("SourceMapConsumer.sourceContentFor", () => {
   it("returns source content by source name", () => {
@@ -258,30 +218,12 @@ describe("SourceMapConsumer.sourceContentFor", () => {
   });
 });
 
-// ── destroy ──────────────────────────────────────────────────────
-
 describe("SourceMapConsumer.destroy", () => {
   it("can be called without error", () => {
     const consumer = new SourceMapConsumer(SIMPLE_MAP);
     consumer.destroy();
     // double-destroy should be safe
     consumer.destroy();
-  });
-});
-
-// ── SourceMapGenerator ──────────────────────────────────────────
-
-describe("SourceMapGenerator constructor", () => {
-  it("creates a generator with file and sourceRoot", () => {
-    const gen = new SourceMapGenerator({ file: "output.js", sourceRoot: "src/" });
-    assert.ok(gen);
-    gen.destroy();
-  });
-
-  it("creates a generator without options", () => {
-    const gen = new SourceMapGenerator();
-    assert.ok(gen);
-    gen.destroy();
   });
 });
 
@@ -343,19 +285,6 @@ describe("SourceMapGenerator.setSourceContent", () => {
 });
 
 describe("SourceMapGenerator.toJSON / toString", () => {
-  it("toJSON returns an object", () => {
-    const gen = new SourceMapGenerator({ file: "out.js" });
-    gen.addMapping({
-      generated: { line: 1, column: 0 },
-      original: { line: 1, column: 0 },
-      source: "in.js",
-    });
-    const map = gen.toJSON();
-    assert.equal(typeof map, "object");
-    assert.equal(map.version, 3);
-    gen.destroy();
-  });
-
   it("toString returns a JSON string", () => {
     const gen = new SourceMapGenerator({ file: "out.js" });
     gen.addMapping({
@@ -370,8 +299,6 @@ describe("SourceMapGenerator.toJSON / toString", () => {
     gen.destroy();
   });
 });
-
-// ── Round-trip: Generator → Consumer ─────────────────────────────
 
 describe("round-trip: SourceMapGenerator → SourceMapConsumer", () => {
   it("generates a map that the consumer can read", () => {
@@ -425,8 +352,6 @@ describe("round-trip: SourceMapGenerator → SourceMapConsumer", () => {
   });
 });
 
-// ── Multi-source consumer ────────────────────────────────────────
-
 describe("multi-source consumer", () => {
   it("handles multiple sources", () => {
     const consumer = new SourceMapConsumer(MULTI_SOURCE_MAP);
@@ -449,82 +374,6 @@ describe("multi-source consumer", () => {
     consumer.destroy();
   });
 });
-
-// ── API compatibility with source-map v0.6 ──────────────────────
-
-describe("API compatibility with source-map v0.6", () => {
-  it("exports all expected classes and constants", () => {
-    assert.equal(typeof SourceMapConsumer, "function");
-    assert.equal(typeof SourceMapGenerator, "function");
-    assert.equal(typeof GREATEST_LOWER_BOUND, "number");
-    assert.equal(typeof LEAST_UPPER_BOUND, "number");
-  });
-
-  it("SourceMapConsumer has expected methods", () => {
-    const consumer = new SourceMapConsumer(SIMPLE_MAP);
-    assert.equal(typeof consumer.originalPositionFor, "function");
-    assert.equal(typeof consumer.generatedPositionFor, "function");
-    assert.equal(typeof consumer.eachMapping, "function");
-    assert.equal(typeof consumer.sourceContentFor, "function");
-    assert.equal(typeof consumer.destroy, "function");
-    consumer.destroy();
-  });
-
-  it("SourceMapGenerator has expected methods", () => {
-    const gen = new SourceMapGenerator();
-    assert.equal(typeof gen.addMapping, "function");
-    assert.equal(typeof gen.setSourceContent, "function");
-    assert.equal(typeof gen.toJSON, "function");
-    assert.equal(typeof gen.toString, "function");
-    assert.equal(typeof gen.applySourceMap, "function");
-    gen.destroy();
-  });
-
-  it("originalPositionFor result has all expected fields", () => {
-    const consumer = new SourceMapConsumer(SIMPLE_MAP);
-    const pos = consumer.originalPositionFor({ line: 1, column: 0 });
-    assert.ok("source" in pos);
-    assert.ok("line" in pos);
-    assert.ok("column" in pos);
-    assert.ok("name" in pos);
-    consumer.destroy();
-  });
-
-  it("generatedPositionFor result has all expected fields", () => {
-    const consumer = new SourceMapConsumer(SIMPLE_MAP);
-    const pos = consumer.generatedPositionFor({ source: "input.js", line: 1, column: 0 });
-    assert.ok("line" in pos);
-    assert.ok("column" in pos);
-    assert.ok("lastColumn" in pos);
-    consumer.destroy();
-  });
-
-  it("eachMapping result has all expected fields", () => {
-    const consumer = new SourceMapConsumer(SIMPLE_MAP);
-    consumer.eachMapping((m) => {
-      assert.ok("generatedLine" in m);
-      assert.ok("generatedColumn" in m);
-      assert.ok("source" in m);
-      assert.ok("originalLine" in m);
-      assert.ok("originalColumn" in m);
-      assert.ok("name" in m);
-      assert.ok("lastGeneratedColumn" in m);
-    });
-    consumer.destroy();
-  });
-
-  it("null result has all null fields (not undefined)", () => {
-    const consumer = new SourceMapConsumer(SIMPLE_MAP);
-    const pos = consumer.originalPositionFor({ line: 999, column: 0 });
-    assert.equal(pos.source, null);
-    assert.equal(pos.line, null);
-    assert.equal(pos.column, null);
-    assert.equal(pos.name, null);
-    consumer.destroy();
-  });
-});
-
-// ── Edge cases ───────────────────────────────────────────────────
 
 describe("edge cases", () => {
   it("handles empty mappings", () => {

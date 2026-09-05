@@ -5,19 +5,14 @@ import { decode, encode } from "../index.js";
 describe("decode", () => {
   it("decodes a simple mappings string", () => {
     const result = decode("AAAA;AACA,GAAG;AACA,IAAI,EAAE");
-    assert.ok(Array.isArray(result));
     assert.equal(result.length, 3);
-    // First line: one segment [0,0,0,0]
     assert.deepEqual(result[0], [[0, 0, 0, 0]]);
-    // Second line: two segments
     assert.equal(result[1].length, 2);
     assert.deepEqual(result[1][0], [0, 0, 1, 0]);
   });
 
   it("decodes empty mappings", () => {
-    const result = decode("");
-    assert.ok(Array.isArray(result));
-    assert.equal(result.length, 0);
+    assert.deepEqual(decode(""), []);
   });
 
   it("decodes semicolons-only (empty lines)", () => {
@@ -59,9 +54,7 @@ describe("decode", () => {
 
 describe("encode", () => {
   it("encodes a simple mapping", () => {
-    const result = encode([[[0, 0, 0, 0]]]);
-    assert.equal(typeof result, "string");
-    assert.equal(result, "AAAA");
+    assert.equal(encode([[[0, 0, 0, 0]]]), "AAAA");
   });
 
   it("encodes empty mappings", () => {
@@ -86,9 +79,7 @@ describe("encode", () => {
         [3, 0, 0, 3],
       ],
     ]);
-    assert.ok(result.length > 0);
-    assert.ok(!result.includes(";"));
-    assert.ok(result.includes(","));
+    assert.equal(result, "AAAA,GAAG");
   });
 });
 

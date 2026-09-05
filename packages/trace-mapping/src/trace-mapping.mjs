@@ -1,6 +1,6 @@
 import core from "./trace-mapping.cjs";
 
-const {
+export const {
   LEAST_UPPER_BOUND,
   GREATEST_LOWER_BOUND,
   TraceMap,
@@ -19,23 +19,3 @@ const {
   FlattenMap,
   AnyMap,
 } = core;
-
-export {
-  LEAST_UPPER_BOUND,
-  GREATEST_LOWER_BOUND,
-  TraceMap,
-  encodedMappings,
-  decodedMappings,
-  traceSegment,
-  originalPositionFor,
-  generatedPositionFor,
-  allGeneratedPositionsFor,
-  eachMapping,
-  sourceContentFor,
-  isIgnored,
-  presortedDecodedMap,
-  decodedMap,
-  encodedMap,
-  FlattenMap,
-  AnyMap,
-};

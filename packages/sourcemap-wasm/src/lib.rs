@@ -1,3 +1,4 @@
+use srcmap_sourcemap::{Bias, GeneratedLocation, OriginalLocation};
 use std::ptr::addr_of;
 use wasm_bindgen::prelude::*;
 
@@ -18,6 +19,52 @@ pub fn result_ptr() -> *const i32 {
 #[wasm_bindgen(js_name = "wasmMemory")]
 pub fn wasm_memory() -> JsValue {
     wasm_bindgen::memory()
+}
+
+fn bias_from(bias: i32) -> Bias {
+    if bias == -1 { Bias::LeastUpperBound } else { Bias::GreatestLowerBound }
+}
+
+/// Builds the `{source, line, column, name}` object returned by the lookup methods.
+fn original_position_object(
+    loc: &OriginalLocation,
+    source: Option<&str>,
+    name: Option<&str>,
+) -> JsValue {
+    let obj = js_sys::Object::new();
+    let source: JsValue = source.map_or(JsValue::NULL, |s| s.into());
+    js_sys::Reflect::set(&obj, &"source".into(), &source).unwrap_or(false);
+    js_sys::Reflect::set(&obj, &"line".into(), &loc.line.into()).unwrap_or(false);
+    js_sys::Reflect::set(&obj, &"column".into(), &loc.column.into()).unwrap_or(false);
+    let name: JsValue = name.map_or(JsValue::NULL, |s| s.into());
+    js_sys::Reflect::set(&obj, &"name".into(), &name).unwrap_or(false);
+    obj.into()
+}
+
+fn generated_position_object(loc: &GeneratedLocation) -> JsValue {
+    let obj = js_sys::Object::new();
+    js_sys::Reflect::set(&obj, &"line".into(), &loc.line.into()).unwrap_or(false);
+    js_sys::Reflect::set(&obj, &"column".into(), &loc.column.into()).unwrap_or(false);
+    obj.into()
+}
+
+/// `[sourceIdx, line, column, nameIdx]`, with -1 for a missing mapping or name.
+fn flat_position(loc: Option<&OriginalLocation>) -> [i32; 4] {
+    loc.map_or([-1; 4], |loc| {
+        [loc.source as i32, loc.line as i32, loc.column as i32, loc.name.map_or(-1, |n| n as i32)]
+    })
+}
+
+/// Batch lookup over a flat `[line0, col0, line1, col1, ...]` array; a trailing odd value is ignored.
+fn flat_positions_for(
+    positions: &[i32],
+    lookup: impl Fn(u32, u32) -> Option<OriginalLocation>,
+) -> Vec<i32> {
+    let mut out = Vec::with_capacity(positions.len() / 2 * 4);
+    for pair in positions.chunks_exact(2) {
+        out.extend_from_slice(&flat_position(lookup(pair[0] as u32, pair[1] as u32).as_ref()));
+    }
+    out
 }
 
 #[wasm_bindgen]
@@ -101,42 +148,22 @@ impl SourceMap {
     /// bias: 0 = GREATEST_LOWER_BOUND (default), -1 = LEAST_UPPER_BOUND
     #[wasm_bindgen(js_name = "originalPositionForWithBias")]
     pub fn original_position_for_with_bias(&self, line: u32, column: u32, bias: i32) -> JsValue {
-        let b = if bias == -1 {
-            srcmap_sourcemap::Bias::LeastUpperBound
-        } else {
-            srcmap_sourcemap::Bias::GreatestLowerBound
-        };
-        match self.inner.original_position_for_with_bias(line, column, b) {
-            Some(loc) => {
-                let obj = js_sys::Object::new();
-                let source: JsValue =
-                    self.inner.get_source(loc.source).map_or(JsValue::NULL, |s| s.into());
-                js_sys::Reflect::set(&obj, &"source".into(), &source).unwrap_or(false);
-                js_sys::Reflect::set(&obj, &"line".into(), &loc.line.into()).unwrap_or(false);
-                js_sys::Reflect::set(&obj, &"column".into(), &loc.column.into()).unwrap_or(false);
-                let name_val: JsValue = match loc.name {
-                    Some(i) => self.inner.get_name(i).map_or(JsValue::NULL, |s| s.into()),
-                    None => JsValue::NULL,
-                };
-                js_sys::Reflect::set(&obj, &"name".into(), &name_val).unwrap_or(false);
-                obj.into()
-            }
-            None => JsValue::NULL,
-        }
+        self.inner.original_position_for_with_bias(line, column, bias_from(bias)).map_or(
+            JsValue::NULL,
+            |loc| {
+                original_position_object(
+                    &loc,
+                    self.inner.get_source(loc.source),
+                    loc.name.and_then(|i| self.inner.get_name(i)),
+                )
+            },
+        )
     }
 
     /// Fast single lookup returning flat array [sourceIdx, line, column, nameIdx].
     #[wasm_bindgen(js_name = "originalPositionFlat")]
     pub fn original_position_flat(&self, line: u32, column: u32) -> Vec<i32> {
-        match self.inner.original_position_for(line, column) {
-            Some(loc) => vec![
-                loc.source as i32,
-                loc.line as i32,
-                loc.column as i32,
-                loc.name.map_or(-1, |n| n as i32),
-            ],
-            None => vec![-1, -1, -1, -1],
-        }
+        flat_position(self.inner.original_position_for(line, column).as_ref()).to_vec()
     }
 
     /// Zero-allocation single lookup via static buffer.
@@ -175,20 +202,9 @@ impl SourceMap {
         column: u32,
         bias: i32,
     ) -> JsValue {
-        let b = if bias == -1 {
-            srcmap_sourcemap::Bias::LeastUpperBound
-        } else {
-            srcmap_sourcemap::Bias::GreatestLowerBound
-        };
-        match self.inner.generated_position_for_with_bias(source, line, column, b) {
-            Some(loc) => {
-                let obj = js_sys::Object::new();
-                js_sys::Reflect::set(&obj, &"line".into(), &loc.line.into()).unwrap_or(false);
-                js_sys::Reflect::set(&obj, &"column".into(), &loc.column.into()).unwrap_or(false);
-                obj.into()
-            }
-            None => JsValue::NULL,
-        }
+        self.inner
+            .generated_position_for_with_bias(source, line, column, bias_from(bias))
+            .map_or(JsValue::NULL, |loc| generated_position_object(&loc))
     }
 
     #[wasm_bindgen(js_name = "mapRange")]
@@ -244,13 +260,8 @@ impl SourceMap {
     ) -> Vec<JsValue> {
         self.inner
             .all_generated_positions_for(source, line, column)
-            .into_iter()
-            .map(|loc| {
-                let obj = js_sys::Object::new();
-                js_sys::Reflect::set(&obj, &"line".into(), &loc.line.into()).unwrap_or(false);
-                js_sys::Reflect::set(&obj, &"column".into(), &loc.column.into()).unwrap_or(false);
-                obj.into()
-            })
+            .iter()
+            .map(generated_position_object)
             .collect()
     }
 
@@ -402,31 +413,9 @@ impl SourceMap {
 
     #[wasm_bindgen(js_name = "originalPositionsFor")]
     pub fn original_positions_for(&self, positions: &[i32]) -> Vec<i32> {
-        let count = positions.len() / 2;
-        let mut out = Vec::with_capacity(count * 4);
-        for i in 0..count {
-            let line = positions[i * 2] as u32;
-            let column = positions[i * 2 + 1] as u32;
-            match self.inner.original_position_for(line, column) {
-                Some(loc) => {
-                    out.push(loc.source as i32);
-                    out.push(loc.line as i32);
-                    out.push(loc.column as i32);
-                    out.push(loc.name.map_or(-1, |n| n as i32));
-                }
-                None => {
-                    out.push(-1);
-                    out.push(-1);
-                    out.push(-1);
-                    out.push(-1);
-                }
-            }
-        }
-        out
+        flat_positions_for(positions, |line, column| self.inner.original_position_for(line, column))
     }
 }
-
-// ── LazySourceMap ──────────────────────────────────────────────────
 
 /// Lazy source map that defers VLQ decoding until lookup time.
 /// Parse is fast (JSON + prescan only), VLQ decode happens per-line on demand.
@@ -450,7 +439,6 @@ impl LazySourceMap {
     /// Only 2 strings cross the boundary — no per-element `Vec<JsValue>` overhead.
     #[wasm_bindgen(js_name = "fromParts")]
     pub fn from_parts(mappings: &str, metadata_json: &str) -> Result<LazySourceMap, JsError> {
-        // Parse the small metadata JSON (no sourcesContent, no mappings — just arrays + strings)
         let raw: srcmap_sourcemap::RawSourceMapLite<'_> =
             serde_json::from_str(metadata_json).map_err(|e| JsError::new(&e.to_string()))?;
 
@@ -479,36 +467,18 @@ impl LazySourceMap {
 
     #[wasm_bindgen(js_name = "originalPositionFor")]
     pub fn original_position_for(&self, line: u32, column: u32) -> JsValue {
-        match self.inner.original_position_for(line, column) {
-            Some(loc) => {
-                let obj = js_sys::Object::new();
-                let source: JsValue =
-                    self.inner.get_source(loc.source).map_or(JsValue::NULL, |s| s.into());
-                js_sys::Reflect::set(&obj, &"source".into(), &source).unwrap_or(false);
-                js_sys::Reflect::set(&obj, &"line".into(), &loc.line.into()).unwrap_or(false);
-                js_sys::Reflect::set(&obj, &"column".into(), &loc.column.into()).unwrap_or(false);
-                let name_val: JsValue = match loc.name {
-                    Some(i) => self.inner.get_name(i).map_or(JsValue::NULL, |s| s.into()),
-                    None => JsValue::NULL,
-                };
-                js_sys::Reflect::set(&obj, &"name".into(), &name_val).unwrap_or(false);
-                obj.into()
-            }
-            None => JsValue::NULL,
-        }
+        self.inner.original_position_for(line, column).map_or(JsValue::NULL, |loc| {
+            original_position_object(
+                &loc,
+                self.inner.get_source(loc.source),
+                loc.name.and_then(|i| self.inner.get_name(i)),
+            )
+        })
     }
 
     #[wasm_bindgen(js_name = "originalPositionFlat")]
     pub fn original_position_flat(&self, line: u32, column: u32) -> Vec<i32> {
-        match self.inner.original_position_for(line, column) {
-            Some(loc) => vec![
-                loc.source as i32,
-                loc.line as i32,
-                loc.column as i32,
-                loc.name.map_or(-1, |n| n as i32),
-            ],
-            None => vec![-1, -1, -1, -1],
-        }
+        flat_position(self.inner.original_position_for(line, column).as_ref()).to_vec()
     }
 
     #[wasm_bindgen(js_name = "originalPositionBuf")]
@@ -532,27 +502,7 @@ impl LazySourceMap {
 
     #[wasm_bindgen(js_name = "originalPositionsFor")]
     pub fn original_positions_for(&self, positions: &[i32]) -> Vec<i32> {
-        let count = positions.len() / 2;
-        let mut out = Vec::with_capacity(count * 4);
-        for i in 0..count {
-            let line = positions[i * 2] as u32;
-            let column = positions[i * 2 + 1] as u32;
-            match self.inner.original_position_for(line, column) {
-                Some(loc) => {
-                    out.push(loc.source as i32);
-                    out.push(loc.line as i32);
-                    out.push(loc.column as i32);
-                    out.push(loc.name.map_or(-1, |n| n as i32));
-                }
-                None => {
-                    out.push(-1);
-                    out.push(-1);
-                    out.push(-1);
-                    out.push(-1);
-                }
-            }
-        }
-        out
+        flat_positions_for(positions, |line, column| self.inner.original_position_for(line, column))
     }
 
     /// Returns the source filename at the given index, or `None` if the index is out of bounds.

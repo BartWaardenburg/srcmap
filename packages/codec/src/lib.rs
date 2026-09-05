@@ -2,12 +2,9 @@ use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 use srcmap_codec::{Segment, SourceMapMappings};
 
-// ── Approach 1: NAPI nested arrays (current baseline) ──────────────
-
 #[napi]
 pub fn decode(mappings: String) -> napi::Result<Vec<Vec<Vec<i64>>>> {
-    let decoded =
-        srcmap_codec::decode(&mappings).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let decoded = decode_mappings(&mappings)?;
     Ok(decoded.into_iter().map(|line| line.into_iter().map(|seg| seg.to_vec()).collect()).collect())
 }
 
@@ -18,12 +15,9 @@ pub fn encode(mappings: Vec<Vec<Vec<i64>>>) -> String {
     srcmap_codec::encode(&converted)
 }
 
-// ── Approach 2: JSON string (V8's JSON.parse is very fast) ─────────
-
 #[napi]
 pub fn decode_json(mappings: String) -> napi::Result<String> {
-    let decoded =
-        srcmap_codec::decode(&mappings).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let decoded = decode_mappings(&mappings)?;
     Ok(to_json(&decoded))
 }
 
@@ -33,14 +27,11 @@ pub fn encode_json(json: String) -> napi::Result<String> {
     Ok(srcmap_codec::encode(&mappings))
 }
 
-// ── Approach 3: Packed i32 buffer ──────────────────────────────────
-// Format: [n_lines, seg_count_line0, seg_count_line1, ...,
-//          n_fields_seg0, val0, val1, ..., n_fields_seg1, val0, ...]
-
+// Packed buffer format: [n_lines, seg_count_line0, seg_count_line1, ...,
+//   n_fields_seg0, val0, val1, ..., n_fields_seg1, val0, ...]
 #[napi]
 pub fn decode_buf(mappings: String) -> napi::Result<Buffer> {
-    let decoded =
-        srcmap_codec::decode(&mappings).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let decoded = decode_mappings(&mappings)?;
     Ok(to_packed_buffer(&decoded).into())
 }
 
@@ -50,7 +41,9 @@ pub fn encode_buf(buf: Buffer) -> String {
     srcmap_codec::encode(&mappings)
 }
 
-// ── JSON helpers ───────────────────────────────────────────────────
+fn decode_mappings(mappings: &str) -> napi::Result<SourceMapMappings> {
+    srcmap_codec::decode(mappings).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
 
 fn to_json(mappings: &SourceMapMappings) -> String {
     // Estimate: ~6 chars per field value on average
@@ -204,8 +197,6 @@ fn from_json(bytes: &[u8]) -> napi::Result<SourceMapMappings> {
 
     Ok(mappings)
 }
-
-// ── Buffer helpers ─────────────────────────────────────────────────
 
 fn to_packed_buffer(mappings: &SourceMapMappings) -> Vec<u8> {
     let n_lines = mappings.len();

@@ -13,12 +13,9 @@ try {
   WasmGenerator = require("../../generator-wasm/pkg/srcmap_generator_wasm.js").SourceMapGenerator;
 }
 
-// ── Constants (match Mozilla source-map v0.6) ───────────────────
-
+// Mozilla source-map v0.6 values; @jridgewell/trace-mapping uses -1/1
 const GREATEST_LOWER_BOUND = 1;
 const LEAST_UPPER_BOUND = 2;
-
-// ── Internal helpers ────────────────────────────────────────────
 
 const COLUMN = 0;
 const SOURCES_INDEX = 1;
@@ -65,6 +62,8 @@ const resolver = (mapUrl, sourceRoot) => {
   };
 };
 
+const noOriginal = () => ({ source: null, line: null, column: null, name: null });
+
 const resolveSourceName = (consumer, source) => {
   if (consumer._wasmSourceMap.has(source)) return source;
 
@@ -74,8 +73,6 @@ const resolveSourceName = (consumer, source) => {
 
   return consumer._wasmSources[index] ?? null;
 };
-
-// ── SourceMapConsumer ───────────────────────────────────────────
 
 class SourceMapConsumer {
   constructor(rawSourceMap, sourceMapUrl) {
@@ -123,7 +120,7 @@ class SourceMapConsumer {
     if (!bias || bias === GREATEST_LOWER_BOUND) {
       const result = this._wasm.originalPositionFor(zeroLine, column);
       if (result === null || result === undefined) {
-        return { source: null, line: null, column: null, name: null };
+        return noOriginal();
       }
 
       let source = result.source ?? null;
@@ -141,16 +138,16 @@ class SourceMapConsumer {
     }
 
     const decoded = this._getDecodedMappings();
-    if (zeroLine >= decoded.length) return { source: null, line: null, column: null, name: null };
+    if (zeroLine >= decoded.length) return noOriginal();
 
     const segments = decoded[zeroLine];
     const index = binarySearchLUB(segments, column);
     if (index === -1 || index >= segments.length) {
-      return { source: null, line: null, column: null, name: null };
+      return noOriginal();
     }
 
     const segment = segments[index];
-    if (segment.length === 1) return { source: null, line: null, column: null, name: null };
+    if (segment.length === 1) return noOriginal();
 
     return {
       source: this._resolvedSources[segment[SOURCES_INDEX]],
@@ -273,20 +270,15 @@ class SourceMapConsumer {
   }
 }
 
-// ── SourceMapGenerator ──────────────────────────────────────────
-
 class SourceMapGenerator {
   constructor(opts) {
     const file = opts?.file || null;
     this._gen = new WasmGenerator(file);
-    this._file = file || undefined;
-    this._sourceRoot = opts?.sourceRoot || undefined;
     this._sourceIndices = new Map();
     this._nameIndices = new Map();
-    this._sourceContents = new Map();
 
-    if (this._sourceRoot) {
-      this._gen.setSourceRoot(this._sourceRoot);
+    if (opts?.sourceRoot) {
+      this._gen.setSourceRoot(opts.sourceRoot);
     }
   }
 
@@ -316,7 +308,6 @@ class SourceMapGenerator {
     const srcIdx = this._getSourceIndex(source);
     if (content != null) {
       this._gen.setSourceContent(srcIdx, content);
-      this._sourceContents.set(source, content);
     }
   }
 
@@ -329,29 +320,13 @@ class SourceMapGenerator {
     return this._gen.toJSON();
   }
 
+  // Accepted for API parity; only the argument check from Mozilla source-map is implemented.
   applySourceMap(consumer, sourceFile, _sourceMapPath) {
-    let source = sourceFile;
-    if (source == null) {
-      if (consumer.file == null) {
-        throw new Error(
-          "SourceMapGenerator.prototype.applySourceMap requires either an explicit source file, " +
-            'or the source map\'s "file" property. Both were omitted.',
-        );
-      }
-      source = consumer.file;
-    }
-
-    const currentMap = this.toJSON();
-    const sourceIdx = currentMap.sources.indexOf(source);
-    if (sourceIdx === -1) return;
-
-    if (consumer.sourcesContent) {
-      for (let i = 0; i < consumer.sources.length; i++) {
-        const content = consumer.sourcesContent[i];
-        if (content != null) {
-          this._sourceContents.set(consumer.sources[i], content);
-        }
-      }
+    if (sourceFile == null && consumer.file == null) {
+      throw new Error(
+        "SourceMapGenerator.prototype.applySourceMap requires either an explicit source file, " +
+          'or the source map\'s "file" property. Both were omitted.',
+      );
     }
   }
 
@@ -381,8 +356,6 @@ class SourceMapGenerator {
   }
 }
 
-// ── Internal helpers ────────────────────────────────────────────
-
 const binarySearchLUB = (segments, column) => {
   let low = 0;
   let high = segments.length - 1;
@@ -392,10 +365,7 @@ const binarySearchLUB = (segments, column) => {
     const mid = low + ((high - low) >> 1);
     const midCol = segments[mid][COLUMN];
 
-    if (midCol === column) {
-      result = mid;
-      high = mid - 1;
-    } else if (midCol > column) {
+    if (midCol >= column) {
       result = mid;
       high = mid - 1;
     } else {

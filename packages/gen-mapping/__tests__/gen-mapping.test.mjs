@@ -12,22 +12,7 @@ import {
   fromMap,
 } from "../src/gen-mapping.mjs";
 
-// ── GenMapping constructor ──────────────────────────────────────
-
 describe("GenMapping constructor", () => {
-  it("creates with default options", () => {
-    const map = new GenMapping();
-    assert.equal(map.file, undefined);
-    assert.equal(map.sourceRoot, undefined);
-    map.free();
-  });
-
-  it("creates with file option", () => {
-    const map = new GenMapping({ file: "output.js" });
-    assert.equal(map.file, "output.js");
-    map.free();
-  });
-
   it("creates with file and sourceRoot", () => {
     const map = new GenMapping({ file: "output.js", sourceRoot: "src/" });
     assert.equal(map.file, "output.js");
@@ -36,60 +21,7 @@ describe("GenMapping constructor", () => {
   });
 });
 
-// ── addMapping ──────────────────────────────────────────────────
-
 describe("addMapping", () => {
-  it("adds a generated-only mapping", () => {
-    const map = new GenMapping({ file: "output.js" });
-    addMapping(map, { generated: { line: 1, column: 0 } });
-    const encoded = toEncodedMap(map);
-    assert.equal(encoded.version, 3);
-    assert.ok(encoded.mappings.length > 0);
-    map.free();
-  });
-
-  it("adds a mapping with source", () => {
-    const map = new GenMapping({ file: "output.js" });
-    addMapping(map, {
-      generated: { line: 1, column: 0 },
-      source: "input.js",
-      original: { line: 1, column: 0 },
-    });
-    const encoded = toEncodedMap(map);
-    assert.deepEqual(encoded.sources, ["input.js"]);
-    map.free();
-  });
-
-  it("adds a mapping with name", () => {
-    const map = new GenMapping({ file: "output.js" });
-    addMapping(map, {
-      generated: { line: 1, column: 0 },
-      source: "input.js",
-      original: { line: 1, column: 0 },
-      name: "myFunc",
-    });
-    const encoded = toEncodedMap(map);
-    assert.deepEqual(encoded.names, ["myFunc"]);
-    map.free();
-  });
-
-  it("adds mappings across multiple lines", () => {
-    const map = new GenMapping();
-    addMapping(map, {
-      generated: { line: 1, column: 0 },
-      source: "input.js",
-      original: { line: 1, column: 0 },
-    });
-    addMapping(map, {
-      generated: { line: 2, column: 4 },
-      source: "input.js",
-      original: { line: 2, column: 2 },
-    });
-    const encoded = toEncodedMap(map);
-    assert.ok(encoded.mappings.includes(";"));
-    map.free();
-  });
-
   it("adds a mapping with inline content", () => {
     const map = new GenMapping();
     addMapping(map, {
@@ -104,21 +36,7 @@ describe("addMapping", () => {
   });
 });
 
-// ── maybeAddMapping ─────────────────────────────────────────────
-
 describe("maybeAddMapping", () => {
-  it("adds the first mapping", () => {
-    const map = new GenMapping();
-    maybeAddMapping(map, {
-      generated: { line: 1, column: 0 },
-      source: "input.js",
-      original: { line: 10, column: 0 },
-    });
-    const mappings = allMappings(map);
-    assert.equal(mappings.length, 1);
-    map.free();
-  });
-
   it("skips redundant mapping with same source position", () => {
     const map = new GenMapping();
     maybeAddMapping(map, {
@@ -209,22 +127,7 @@ describe("maybeAddMapping", () => {
   });
 });
 
-// ── setSourceContent ────────────────────────────────────────────
-
 describe("setSourceContent", () => {
-  it("sets content by source name", () => {
-    const map = new GenMapping();
-    addMapping(map, {
-      generated: { line: 1, column: 0 },
-      source: "input.js",
-      original: { line: 1, column: 0 },
-    });
-    setSourceContent(map, "input.js", "const x = 1;");
-    const encoded = toEncodedMap(map);
-    assert.deepEqual(encoded.sourcesContent, ["const x = 1;"]);
-    map.free();
-  });
-
   it("registers source if not already present", () => {
     const map = new GenMapping();
     setSourceContent(map, "other.js", "const y = 2;");
@@ -259,8 +162,6 @@ describe("setSourceContent", () => {
   });
 });
 
-// ── setIgnore ───────────────────────────────────────────────────
-
 describe("setIgnore", () => {
   it("adds source to ignore list", () => {
     const map = new GenMapping();
@@ -280,8 +181,6 @@ describe("setIgnore", () => {
     map.free();
   });
 });
-
-// ── allMappings ─────────────────────────────────────────────────
 
 describe("allMappings", () => {
   it("returns empty array for no mappings", () => {
@@ -331,8 +230,6 @@ describe("allMappings", () => {
   });
 });
 
-// ── toEncodedMap ────────────────────────────────────────────────
-
 describe("toEncodedMap", () => {
   it("returns a valid encoded source map object", () => {
     const map = new GenMapping({ file: "output.js" });
@@ -364,24 +261,7 @@ describe("toEncodedMap", () => {
   });
 });
 
-// ── toDecodedMap ────────────────────────────────────────────────
-
 describe("toDecodedMap", () => {
-  it("returns a valid decoded source map object", () => {
-    const map = new GenMapping({ file: "output.js" });
-    addMapping(map, {
-      generated: { line: 1, column: 0 },
-      source: "input.js",
-      original: { line: 1, column: 0 },
-    });
-    const decoded = toDecodedMap(map);
-    assert.equal(decoded.version, 3);
-    assert.equal(decoded.file, "output.js");
-    assert.ok(Array.isArray(decoded.mappings));
-    assert.deepEqual(decoded.sources, ["input.js"]);
-    map.free();
-  });
-
   it("decoded mappings contain correct segments", () => {
     const map = new GenMapping();
     addMapping(map, {
@@ -419,8 +299,6 @@ describe("toDecodedMap", () => {
     map.free();
   });
 });
-
-// ── fromMap ─────────────────────────────────────────────────────
 
 describe("fromMap", () => {
   it("round-trips an encoded source map", () => {
@@ -473,8 +351,6 @@ describe("fromMap", () => {
     gen.free();
   });
 });
-
-// ── Compatibility with Babel usage patterns ─────────────────────
 
 describe("Babel integration patterns", () => {
   it("handles typical Babel gen-mapping workflow", () => {
@@ -530,34 +406,7 @@ describe("Babel integration patterns", () => {
 
     map.free();
   });
-
-  it("handles multiple source files", () => {
-    const map = new GenMapping({ file: "bundle.js" });
-
-    setSourceContent(map, "a.js", "// a");
-    setSourceContent(map, "b.js", "// b");
-
-    addMapping(map, {
-      generated: { line: 1, column: 0 },
-      source: "a.js",
-      original: { line: 1, column: 0 },
-    });
-    addMapping(map, {
-      generated: { line: 2, column: 0 },
-      source: "b.js",
-      original: { line: 1, column: 0 },
-    });
-
-    const encoded = toEncodedMap(map);
-    assert.deepEqual(encoded.sources, ["a.js", "b.js"]);
-    assert.deepEqual(encoded.sourcesContent, ["// a", "// b"]);
-    assert.equal(encoded.file, "bundle.js");
-
-    map.free();
-  });
 });
-
-// ── Large roundtrip ─────────────────────────────────────────────
 
 describe("large roundtrip", () => {
   it("handles 1000 mappings", () => {

@@ -8,12 +8,8 @@ try {
   SourceMap = require("../../sourcemap-wasm/pkg/srcmap_sourcemap_wasm.js").SourceMap;
 }
 
-// ── Constants ────────────────────────────────────────────────────
-
 const LEAST_UPPER_BOUND = -1;
 const GREATEST_LOWER_BOUND = 1;
-
-// ── Internal helpers ─────────────────────────────────────────────
 
 const LINE_GTR_ZERO = "`line` must be greater than 0 (lines start at line 1)";
 const COL_GTR_EQ_ZERO = "`column` must be greater than or equal to 0 (columns start at column 0)";
@@ -65,8 +61,6 @@ const resolver = (mapUrl, sourceRoot) => {
   };
 };
 
-// ── TraceMap class ───────────────────────────────────────────────
-
 class TraceMap {
   constructor(map, mapUrl) {
     // If already a TraceMap, extract a plain object to avoid sharing the WASM
@@ -111,9 +105,8 @@ class TraceMap {
     const resolve = resolver(mapUrl, this.sourceRoot);
     this.resolvedSources = this.sources.map(resolve);
 
-    // Cache WASM sources array for O(1) lookups (avoids re-allocating on every access)
+    // The WASM `sources` getter allocates a fresh array on every access; cache it once
     this._wasmSources = [...this._wasm.sources];
-    // Build source name → index map for fast reverse lookups
     this._wasmSourceMap = new Map();
     for (let i = 0; i < this._wasmSources.length; i++) {
       this._wasmSourceMap.set(this._wasmSources[i], i);
@@ -146,7 +139,10 @@ class TraceMap {
   }
 }
 
-// ── Free functions ───────────────────────────────────────────────
+const noOriginal = () => ({ source: null, line: null, column: null, name: null });
+
+// Duck-typed source map objects (e.g. Vite's DecodedMap) are wrapped on the fly
+const asTraceMap = (map) => (map instanceof TraceMap || map._wasm ? map : new TraceMap(map));
 
 const encodedMappings = (map) => {
   if (map._encoded != null) return map._encoded;
@@ -199,10 +195,7 @@ const traceSegment = (map, line, column) => {
 };
 
 const originalPositionFor = (map, needle) => {
-  // Auto-wrap duck-typed objects (e.g. Vite's DecodedMap) into a TraceMap
-  if (!(map instanceof TraceMap) && !map._wasm) {
-    map = new TraceMap(map);
-  }
+  map = asTraceMap(map);
 
   let { line, column, bias } = needle;
   line--;
@@ -212,7 +205,7 @@ const originalPositionFor = (map, needle) => {
   if (!bias || bias === GREATEST_LOWER_BOUND) {
     const result = map._wasm.originalPositionFor(line, column);
     if (result === null || result === undefined) {
-      return { source: null, line: null, column: null, name: null };
+      return noOriginal();
     }
 
     // Map WASM source name to resolvedSources
@@ -231,16 +224,16 @@ const originalPositionFor = (map, needle) => {
   }
 
   const decoded = decodedMappings(map);
-  if (line >= decoded.length) return { source: null, line: null, column: null, name: null };
+  if (line >= decoded.length) return noOriginal();
 
   const segments = decoded[line];
   const index = binarySearchLUB(segments, column);
   if (index === -1 || index >= segments.length) {
-    return { source: null, line: null, column: null, name: null };
+    return noOriginal();
   }
 
   const segment = segments[index];
-  if (segment.length === 1) return { source: null, line: null, column: null, name: null };
+  if (segment.length === 1) return noOriginal();
 
   return {
     source: map.resolvedSources[segment[SOURCES_INDEX]],
@@ -251,9 +244,7 @@ const originalPositionFor = (map, needle) => {
 };
 
 const generatedPositionFor = (map, needle) => {
-  if (!(map instanceof TraceMap) && !map._wasm) {
-    map = new TraceMap(map);
-  }
+  map = asTraceMap(map);
   const { source, line, column, bias } = needle;
   if (line < 1) throw new Error(LINE_GTR_ZERO);
   if (column < 0) throw new Error(COL_GTR_EQ_ZERO);
@@ -275,9 +266,7 @@ const generatedPositionFor = (map, needle) => {
 };
 
 const allGeneratedPositionsFor = (map, needle) => {
-  if (!(map instanceof TraceMap) && !map._wasm) {
-    map = new TraceMap(map);
-  }
+  map = asTraceMap(map);
   const { source, line, column } = needle;
   if (line < 1) throw new Error(LINE_GTR_ZERO);
   if (column < 0) throw new Error(COL_GTR_EQ_ZERO);
@@ -293,9 +282,7 @@ const allGeneratedPositionsFor = (map, needle) => {
 };
 
 const eachMapping = (map, cb) => {
-  if (!(map instanceof TraceMap) && !map._wasm) {
-    map = new TraceMap(map);
-  }
+  map = asTraceMap(map);
   const decoded = decodedMappings(map);
   const { names, resolvedSources } = map;
 
@@ -387,8 +374,6 @@ const encodedMap = (map) => ({
 const FlattenMap = TraceMap;
 const AnyMap = TraceMap;
 
-// ── Internal helpers ─────────────────────────────────────────────
-
 const sourceIndexOf = (map, source) => {
   let index = map.sources.indexOf(source);
   if (index === -1) index = map.resolvedSources.indexOf(source);
@@ -396,14 +381,9 @@ const sourceIndexOf = (map, source) => {
 };
 
 const resolveSourceName = (map, source) => {
-  // Try direct match against cached WASM sources (O(1) via Map)
   if (map._wasmSourceMap.has(source)) return source;
-
-  // Try matching via index (raw sources → WASM sources)
-  let index = map.sources.indexOf(source);
-  if (index === -1) index = map.resolvedSources.indexOf(source);
+  const index = sourceIndexOf(map, source);
   if (index === -1) return null;
-
   return map._wasmSources[index] ?? null;
 };
 
@@ -416,10 +396,7 @@ const binarySearch = (segments, column) => {
     const mid = low + ((high - low) >> 1);
     const midCol = segments[mid][COLUMN];
 
-    if (midCol === column) {
-      result = mid;
-      low = mid + 1;
-    } else if (midCol < column) {
+    if (midCol <= column) {
       result = mid;
       low = mid + 1;
     } else {
@@ -439,10 +416,7 @@ const binarySearchLUB = (segments, column) => {
     const mid = low + ((high - low) >> 1);
     const midCol = segments[mid][COLUMN];
 
-    if (midCol === column) {
-      result = mid;
-      high = mid - 1;
-    } else if (midCol > column) {
+    if (midCol >= column) {
       result = mid;
       high = mid - 1;
     } else {

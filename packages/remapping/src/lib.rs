@@ -2,8 +2,6 @@ use napi::JsValue;
 use napi::bindgen_prelude::JsObjectValue;
 use napi_derive::napi;
 
-// ── ConcatBuilder ────────────────────────────────────────────────
-
 #[napi(js_name = "ConcatBuilder")]
 pub struct JsConcatBuilder {
     inner: srcmap_remapping::ConcatBuilder,
@@ -33,8 +31,6 @@ impl JsConcatBuilder {
     }
 }
 
-// ── Remap ────────────────────────────────────────────────────────
-
 /// Compose/remap source maps through a transform chain.
 ///
 /// `outerJson` is the final-stage source map as a JSON string.
@@ -50,7 +46,6 @@ pub fn remap(
     let outer = srcmap_sourcemap::SourceMap::from_json(&outer_json)
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
-    // Pre-load all upstream source maps from the JS object
     let mut upstream_maps: std::collections::HashMap<String, Option<srcmap_sourcemap::SourceMap>> =
         std::collections::HashMap::new();
 

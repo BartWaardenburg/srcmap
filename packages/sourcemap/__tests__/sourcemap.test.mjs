@@ -17,11 +17,6 @@ const MULTI_SOURCE_MAP = JSON.stringify({
 });
 
 describe("SourceMap constructor", () => {
-  it("parses a valid source map", () => {
-    const sm = new SourceMap(SIMPLE_MAP);
-    assert.ok(sm);
-  });
-
   it("throws on invalid JSON", () => {
     assert.throws(() => new SourceMap("not json"), Error);
   });
@@ -66,7 +61,7 @@ describe("mappingCount and lineCount", () => {
 
   it("reports correct line count", () => {
     const sm = new SourceMap(SIMPLE_MAP);
-    assert.ok(sm.lineCount >= 1);
+    assert.equal(sm.lineCount, 1);
   });
 });
 
@@ -116,13 +111,8 @@ describe("originalPositionsFor (batch)", () => {
   it("batch-resolves positions", () => {
     const sm = new SourceMap(SIMPLE_MAP);
     // Flat array: [line0, col0, line1, col1]
-    const results = sm.originalPositionsFor([0, 0]);
-    assert.ok(Array.isArray(results));
-    // Should return 4 values per position: [srcIdx, line, col, nameIdx]
-    assert.equal(results.length, 4);
-    assert.ok(results[0] >= 0); // valid source index
-    assert.equal(results[1], 0); // line
-    assert.equal(results[2], 0); // column
+    // Four values per position: [srcIdx, line, col, nameIdx]
+    assert.deepEqual(sm.originalPositionsFor([0, 0]), [0, 0, 0, 0]);
   });
 
   it("returns -1 for unmapped batch positions", () => {

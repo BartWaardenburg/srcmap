@@ -1,7 +1,5 @@
 use wasm_bindgen::prelude::*;
 
-// ── ConcatBuilder ────────────────────────────────────────────────
-
 #[wasm_bindgen]
 pub struct ConcatBuilder {
     inner: srcmap_remapping::ConcatBuilder,
@@ -30,8 +28,6 @@ impl ConcatBuilder {
         self.inner.to_json()
     }
 }
-
-// ── Remap ────────────────────────────────────────────────────────
 
 /// Compose/remap source maps through a transform chain.
 ///

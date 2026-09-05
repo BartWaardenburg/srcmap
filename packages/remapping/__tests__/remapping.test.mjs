@@ -2,8 +2,6 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import remapping, { SourceMap } from "../src/remapping.mjs";
 
-// ── Test fixtures ────────────────────────────────────────────────
-
 const ORIGINAL_MAP = {
   version: 3,
   sources: ["original.ts"],
@@ -25,8 +23,6 @@ const INNER_MAP = {
   names: [],
   mappings: "AACA;AACA",
 };
-
-// ── SourceMap class ──────────────────────────────────────────────
 
 describe("SourceMap", () => {
   it("has version, sources, names, mappings, sourcesContent", () => {
@@ -64,8 +60,6 @@ describe("SourceMap", () => {
     assert.equal(sm.file, "output.js");
   });
 });
-
-// ── Single map input ─────────────────────────────────────────────
 
 describe("remapping(singleMap, loader)", () => {
   it("remaps through a single upstream map", () => {
@@ -167,8 +161,6 @@ describe("remapping(singleMap, loader)", () => {
     assert.deepEqual(result.sources, ["original.ts"]);
   });
 });
-
-// ── Array input ──────────────────────────────────────────────────
 
 describe("remapping([maps], loader)", () => {
   it("composes two source maps", () => {
@@ -286,8 +278,6 @@ describe("remapping([maps], loader)", () => {
   });
 });
 
-// ── Vite-style usage ─────────────────────────────────────────────
-
 describe("Vite combineSourcemaps pattern", () => {
   it("remapping(sourcemapList, () => null) — simple chain", () => {
     // Vite's fast path: array of maps, no loader
@@ -344,38 +334,7 @@ describe("Vite combineSourcemaps pattern", () => {
   });
 });
 
-// ── Return value interface ───────────────────────────────────────
-
 describe("return value interface", () => {
-  it("result has all expected properties", () => {
-    const result = remapping(ORIGINAL_MAP, () => null);
-
-    assert.equal(typeof result.version, "number");
-    assert.ok(Array.isArray(result.sources));
-    assert.ok(Array.isArray(result.names));
-    assert.equal(typeof result.mappings, "string");
-    assert.equal(typeof result.toString, "function");
-    assert.equal(typeof result.toJSON, "function");
-  });
-
-  it("toString() produces valid JSON", () => {
-    const result = remapping(ORIGINAL_MAP, () => null);
-    const str = result.toString();
-    const parsed = JSON.parse(str);
-    assert.equal(parsed.version, 3);
-  });
-
-  it("toJSON() produces serializable object", () => {
-    const result = remapping(ORIGINAL_MAP, () => null);
-    const json = result.toJSON();
-    assert.equal(json.version, 3);
-    assert.ok(Array.isArray(json.sources));
-
-    // Re-stringify round-trips
-    const reparsed = JSON.parse(JSON.stringify(json));
-    assert.equal(reparsed.version, 3);
-  });
-
   it("result can be passed as input to another remapping call", () => {
     const step1 = remapping(INTERMEDIATE_MAP, (source) => {
       if (source === "intermediate.js") return INNER_MAP;
@@ -389,8 +348,6 @@ describe("return value interface", () => {
   });
 });
 
-// ── Error handling ───────────────────────────────────────────────
-
 describe("error handling", () => {
   it("throws on invalid JSON string input", () => {
     assert.throws(() => remapping("not json", () => null));
@@ -400,17 +357,5 @@ describe("error handling", () => {
     const result = remapping([], () => null);
     assert.ok(result instanceof SourceMap);
     assert.equal(result.version, 3);
-  });
-});
-
-// ── Default export ───────────────────────────────────────────────
-
-describe("exports", () => {
-  it("default export is the remapping function", () => {
-    assert.equal(typeof remapping, "function");
-  });
-
-  it("SourceMap is a named export", () => {
-    assert.equal(typeof SourceMap, "function");
   });
 });

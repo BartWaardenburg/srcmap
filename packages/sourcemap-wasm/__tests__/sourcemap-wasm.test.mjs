@@ -25,12 +25,6 @@ const MULTI_SOURCE_MAP = JSON.stringify({
 });
 
 describe("SourceMap constructor", () => {
-  it("parses a valid source map", () => {
-    const sm = new SourceMap(SIMPLE_MAP);
-    assert.ok(sm);
-    sm.free();
-  });
-
   it("throws on invalid JSON", () => {
     assert.throws(() => new SourceMap("not json"));
   });
@@ -66,7 +60,7 @@ describe("mappingCount and lineCount", () => {
 
   it("reports correct line count", () => {
     const sm = new SourceMap(SIMPLE_MAP);
-    assert.ok(sm.lineCount >= 1);
+    assert.equal(sm.lineCount, 1);
     sm.free();
   });
 });
@@ -122,10 +116,8 @@ describe("originalPositionsFor (batch)", () => {
     const sm = new SourceMap(SIMPLE_MAP);
     const results = sm.originalPositionsFor(new Int32Array([0, 0]));
     assert.ok(results instanceof Int32Array);
-    assert.equal(results.length, 4);
-    assert.ok(results[0] >= 0); // valid source index
-    assert.equal(results[1], 0); // line
-    assert.equal(results[2], 0); // column
+    // Four values per position: [srcIdx, line, col, nameIdx]
+    assert.deepEqual([...results], [0, 0, 0, 0]);
     sm.free();
   });
 
@@ -298,12 +290,8 @@ describe("allMappingsFlat", () => {
     const sm = new SourceMap(SIMPLE_MAP);
     const flat = sm.allMappingsFlat();
     assert.ok(flat instanceof Int32Array);
-    // 2 segments * 7 fields each = 14
-    assert.equal(flat.length, 14);
-    // First mapping: genLine=0, genCol=0
-    assert.equal(flat[0], 0); // genLine
-    assert.equal(flat[1], 0); // genCol
-    assert.ok(flat[2] >= 0); // source index
+    // 7 fields per mapping: [genLine, genCol, srcIdx, origLine, origCol, nameIdx, isRange]
+    assert.deepEqual([...flat], [0, 0, 0, 0, 0, 0, 0, 0, 9, 0, 1, 4, 1, 0]);
     sm.free();
   });
 });

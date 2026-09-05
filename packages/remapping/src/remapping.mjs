@@ -3,17 +3,8 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { remap: wasmRemap } = require("@srcmap/remapping-wasm");
 
-// ── SourceMap class ─────────────────────────────────────────────
-
-/**
- * Source map result class with the same interface as @jridgewell/remapping's SourceMap.
- * Provides .version, .file, .mappings, .names, .sources, .sourcesContent,
- * plus toString() and toJSON() methods.
- */
+/** Result class with the same interface as @jridgewell/remapping's SourceMap. */
 class SourceMap {
-  /**
-   * @param {object} raw - Parsed source map object
-   */
   constructor(raw) {
     this.version = raw.version;
     this.file = raw.file ?? undefined;
@@ -48,14 +39,6 @@ class SourceMap {
   }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────
-
-/**
- * Convert a source map input (object, string, or SourceMap) to a JSON string
- * suitable for the WASM remap function.
- * @param {object | string} input
- * @returns {string}
- */
 const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 const encodeVlq = (value) => {
@@ -109,11 +92,6 @@ const toJsonString = (input) => {
   return JSON.stringify(input);
 };
 
-/**
- * Wrap the user's loader to convert its return values to JSON strings.
- * @param {Function} loader
- * @returns {Function}
- */
 const wrapLoader = (loader) => (source) => {
   const result = loader(source);
   if (result == null) return null;
@@ -142,8 +120,6 @@ const remapArray = (maps, loader) => {
   // to resolve any remaining upstream sources.
   return wasmRemap(current, wrapLoader(loader));
 };
-
-// ── Main API ────────────────────────────────────────────────────
 
 /**
  * Remap/compose source maps. Drop-in replacement for @jridgewell/remapping.

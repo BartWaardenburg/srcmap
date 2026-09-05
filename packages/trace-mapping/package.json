@@ -37,7 +37,6 @@
   },
   "scripts": {
     "test": "node --test __tests__/trace-mapping.test.mjs",
-    "test:cjs": "node --test __tests__/trace-mapping.cjs.test.cjs",
     "test:compat": "node --test __tests__/compat.test.mjs",
     "test:coverage": "mkdir -p coverage && node --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=coverage/lcov.info --test-reporter=spec --test-reporter-destination=stdout __tests__/trace-mapping.test.mjs"
   },

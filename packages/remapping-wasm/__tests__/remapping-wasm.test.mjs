@@ -19,8 +19,6 @@ const MAP_B = JSON.stringify({
   mappings: "AAAAA",
 });
 
-// ── ConcatBuilder ────────────────────────────────────────────────
-
 describe("ConcatBuilder", () => {
   it("concatenates two source maps", () => {
     const builder = new ConcatBuilder("bundle.js");
@@ -77,8 +75,6 @@ describe("ConcatBuilder", () => {
     builder.free();
   });
 });
-
-// ── remap ────────────────────────────────────────────────────────
 
 describe("remap", () => {
   it("remaps through a single upstream map", () => {

@@ -32,12 +32,7 @@ impl JsSourceMap {
     /// Both line and column are 0-based.
     #[napi]
     pub fn original_position_for(&self, line: u32, column: u32) -> Option<OriginalPosition> {
-        self.inner.original_position_for(line, column).map(|loc| OriginalPosition {
-            source: Some(self.inner.source(loc.source).to_string()),
-            line: loc.line,
-            column: loc.column,
-            name: loc.name.map(|i| self.inner.name(i).to_string()),
-        })
+        self.inner.original_position_for(line, column).map(|loc| self.original_position(&loc))
     }
 
     /// Look up the original source position with a search bias.
@@ -54,12 +49,18 @@ impl JsSourceMap {
         } else {
             srcmap_sourcemap::Bias::GreatestLowerBound
         };
-        self.inner.original_position_for_with_bias(line, column, b).map(|loc| OriginalPosition {
+        self.inner
+            .original_position_for_with_bias(line, column, b)
+            .map(|loc| self.original_position(&loc))
+    }
+
+    fn original_position(&self, loc: &srcmap_sourcemap::OriginalLocation) -> OriginalPosition {
+        OriginalPosition {
             source: Some(self.inner.source(loc.source).to_string()),
             line: loc.line,
             column: loc.column,
             name: loc.name.map(|i| self.inner.name(i).to_string()),
-        })
+        }
     }
 
     /// Look up the generated position for an original source position.
@@ -156,21 +157,13 @@ impl JsSourceMap {
     /// Resolve a source index to its filename.
     #[napi]
     pub fn source(&self, index: u32) -> Option<String> {
-        if (index as usize) < self.inner.sources.len() {
-            Some(self.inner.source(index).to_string())
-        } else {
-            None
-        }
+        self.inner.get_source(index).map(|s| s.to_string())
     }
 
     /// Resolve a name index to its string.
     #[napi]
     pub fn name(&self, index: u32) -> Option<String> {
-        if (index as usize) < self.inner.names.len() {
-            Some(self.inner.name(index).to_string())
-        } else {
-            None
-        }
+        self.inner.get_name(index).map(|s| s.to_string())
     }
 
     #[napi(getter)]

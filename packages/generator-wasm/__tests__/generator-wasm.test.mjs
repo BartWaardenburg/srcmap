@@ -2,20 +2,6 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { SourceMapGenerator } from "../pkg/srcmap_generator_wasm.js";
 
-describe("SourceMapGenerator constructor", () => {
-  it("creates a generator with a file name", () => {
-    const gen = new SourceMapGenerator("output.js");
-    assert.ok(gen);
-    gen.free();
-  });
-
-  it("creates a generator without a file name", () => {
-    const gen = new SourceMapGenerator();
-    assert.ok(gen);
-    gen.free();
-  });
-});
-
 describe("sources and names", () => {
   it("registers sources with deduplication", () => {
     const gen = new SourceMapGenerator();

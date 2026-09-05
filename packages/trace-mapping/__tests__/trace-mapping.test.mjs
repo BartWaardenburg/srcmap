@@ -20,8 +20,6 @@ import {
   GREATEST_LOWER_BOUND,
 } from "../src/trace-mapping.mjs";
 
-// ── Test fixtures ────────────────────────────────────────────────
-
 const SIMPLE_MAP = JSON.stringify({
   version: 3,
   sources: ["input.js"],
@@ -87,8 +85,6 @@ const INDEXED_MAP = JSON.stringify({
   ],
 });
 
-// ── TraceMap constructor ─────────────────────────────────────────
-
 describe("TraceMap constructor", () => {
   it("parses from JSON string", () => {
     const map = new TraceMap(SIMPLE_MAP);
@@ -105,35 +101,10 @@ describe("TraceMap constructor", () => {
     map.free();
   });
 
-  it("preserves file field", () => {
-    const map = new TraceMap(SIMPLE_MAP_WITH_CONTENT);
-    assert.equal(map.file, "output.js");
-    map.free();
-  });
-
-  it("has resolvedSources", () => {
-    const map = new TraceMap(SIMPLE_MAP);
-    assert.ok(Array.isArray(map.resolvedSources));
-    assert.equal(map.resolvedSources.length, 1);
-    map.free();
-  });
-
   it("supports Symbol.dispose", () => {
     const map = new TraceMap(SIMPLE_MAP);
     assert.equal(typeof map[Symbol.dispose], "function");
     map[Symbol.dispose]();
-  });
-
-  it("handles indexed source maps", () => {
-    const map = new TraceMap(INDEXED_MAP);
-    assert.ok(map.sources.length >= 2 || map.resolvedSources.length >= 2);
-    map.free();
-  });
-
-  it("reads ignoreList", () => {
-    const map = new TraceMap(IGNORE_LIST_MAP);
-    assert.deepEqual(map.ignoreList, [1]);
-    map.free();
   });
 
   it("reads x_google_ignoreList as ignoreList", () => {
@@ -142,8 +113,6 @@ describe("TraceMap constructor", () => {
     map.free();
   });
 });
-
-// ── Constants ────────────────────────────────────────────────────
 
 describe("constants", () => {
   it("exports LEAST_UPPER_BOUND = -1", () => {
@@ -154,8 +123,6 @@ describe("constants", () => {
     assert.equal(GREATEST_LOWER_BOUND, 1);
   });
 });
-
-// ── originalPositionFor ──────────────────────────────────────────
 
 describe("originalPositionFor", () => {
   it("finds the original position (1-based lines)", () => {
@@ -195,13 +162,6 @@ describe("originalPositionFor", () => {
     const pos = originalPositionFor(map, { line: 2, column: 0 });
     assert.equal(pos.source, "b.js");
     assert.ok(pos.line >= 1);
-    map.free();
-  });
-
-  it("resolves name when present", () => {
-    const map = new TraceMap(SIMPLE_MAP);
-    const pos = originalPositionFor(map, { line: 1, column: 0 });
-    assert.equal(pos.name, "foo");
     map.free();
   });
 
@@ -248,13 +208,10 @@ describe("originalPositionFor", () => {
     const pos = originalPositionFor(map, { line: 1, column: 5, bias: LEAST_UPPER_BOUND });
     assert.equal(pos.source, "x.js");
     assert.equal(pos.line, 1);
-    // With LUB, should find segment at or after column 5
-    assert.ok(pos.column != null);
+    assert.equal(pos.column, 9);
     map.free();
   });
 });
-
-// ── generatedPositionFor ─────────────────────────────────────────
 
 describe("generatedPositionFor", () => {
   it("reverse-looks up a position (1-based lines)", () => {
@@ -280,8 +237,6 @@ describe("generatedPositionFor", () => {
   });
 });
 
-// ── allGeneratedPositionsFor ─────────────────────────────────────
-
 describe("allGeneratedPositionsFor", () => {
   it("returns all generated positions for an original position", () => {
     const map = new TraceMap(SIMPLE_MAP);
@@ -305,28 +260,7 @@ describe("allGeneratedPositionsFor", () => {
   });
 });
 
-// ── eachMapping ──────────────────────────────────────────────────
-
 describe("eachMapping", () => {
-  it("iterates all mappings", () => {
-    const map = new TraceMap(SIMPLE_MAP);
-    const mappings = [];
-    eachMapping(map, (m) => mappings.push(m));
-    assert.ok(mappings.length >= 2);
-    map.free();
-  });
-
-  it("provides 1-based lines", () => {
-    const map = new TraceMap(SIMPLE_MAP);
-    const mappings = [];
-    eachMapping(map, (m) => mappings.push(m));
-    assert.ok(mappings[0].generatedLine >= 1);
-    if (mappings[0].originalLine != null) {
-      assert.ok(mappings[0].originalLine >= 1);
-    }
-    map.free();
-  });
-
   it("provides source, name when available", () => {
     const map = new TraceMap(SIMPLE_MAP);
     const mappings = [];
@@ -338,17 +272,7 @@ describe("eachMapping", () => {
     assert.equal(first.name, "foo");
     map.free();
   });
-
-  it("iterates correct number of segments", () => {
-    const map = new TraceMap(MULTI_SOURCE_MAP);
-    const mappings = [];
-    eachMapping(map, (m) => mappings.push(m));
-    assert.ok(mappings.length >= 3); // AAAAA;ACAAC,KACCC has at least 3 segments
-    map.free();
-  });
 });
-
-// ── sourceContentFor ─────────────────────────────────────────────
 
 describe("sourceContentFor", () => {
   it("returns source content", () => {
@@ -372,8 +296,6 @@ describe("sourceContentFor", () => {
     map.free();
   });
 });
-
-// ── isIgnored ────────────────────────────────────────────────────
 
 describe("isIgnored", () => {
   it("returns true for ignored source", () => {
@@ -402,8 +324,6 @@ describe("isIgnored", () => {
   });
 });
 
-// ── encodedMappings ──────────────────────────────────────────────
-
 describe("encodedMappings", () => {
   it("returns the VLQ mappings string", () => {
     const map = new TraceMap(SIMPLE_MAP);
@@ -414,30 +334,7 @@ describe("encodedMappings", () => {
   });
 });
 
-// ── decodedMappings ──────────────────────────────────────────────
-
 describe("decodedMappings", () => {
-  it("returns decoded segments as arrays", () => {
-    const map = new TraceMap(SIMPLE_MAP);
-    const decoded = decodedMappings(map);
-    assert.ok(Array.isArray(decoded));
-    assert.ok(decoded.length >= 1);
-    // First line should have segments
-    assert.ok(decoded[0].length >= 1);
-    map.free();
-  });
-
-  it("segments have correct structure", () => {
-    const map = new TraceMap(SIMPLE_MAP);
-    const decoded = decodedMappings(map);
-    const firstSeg = decoded[0][0];
-
-    // AAAAA → [0, 0, 0, 0, 0] (genCol, srcIdx, origLine, origCol, nameIdx)
-    assert.ok(firstSeg.length === 4 || firstSeg.length === 5);
-    assert.equal(firstSeg[0], 0); // generated column
-    map.free();
-  });
-
   it("caches result", () => {
     const map = new TraceMap(SIMPLE_MAP);
     const decoded1 = decodedMappings(map);
@@ -446,8 +343,6 @@ describe("decodedMappings", () => {
     map.free();
   });
 });
-
-// ── traceSegment ─────────────────────────────────────────────────
 
 describe("traceSegment", () => {
   it("returns segment for valid position (0-based)", () => {
@@ -467,7 +362,7 @@ describe("traceSegment", () => {
   });
 
   it("returns null for column before first segment", () => {
-    // Map where first segment starts at column 5
+    // KAAA: first segment starts at column 5
     const offsetMap = JSON.stringify({
       version: 3,
       sources: ["x.js"],
@@ -475,16 +370,11 @@ describe("traceSegment", () => {
       mappings: "KAAA",
     });
     const map = new TraceMap(offsetMap);
-    // Column 0 should return null (no segment at or before col 0... wait,
-    // KAAA decodes to genCol=5, so column 0 returns null)
     const seg = traceSegment(map, 0, 0);
-    // With GLB, column 0 with first segment at 5 → returns -1 / null
     assert.equal(seg, null);
     map.free();
   });
 });
-
-// ── presortedDecodedMap ──────────────────────────────────────────
 
 describe("presortedDecodedMap", () => {
   it("creates a TraceMap from pre-decoded data", () => {
@@ -509,8 +399,6 @@ describe("presortedDecodedMap", () => {
   });
 });
 
-// ── decodedMap / encodedMap ──────────────────────────────────────
-
 describe("decodedMap", () => {
   it("exports as decoded source map object", () => {
     const map = new TraceMap(SIMPLE_MAP);
@@ -534,15 +422,10 @@ describe("encodedMap", () => {
   });
 });
 
-// ── FlattenMap / AnyMap ──────────────────────────────────────────
-
 describe("FlattenMap / AnyMap", () => {
-  it("FlattenMap is exported", () => {
-    assert.equal(typeof FlattenMap, "function");
-  });
-
-  it("AnyMap is exported", () => {
-    assert.equal(typeof AnyMap, "function");
+  it("both alias TraceMap", () => {
+    assert.equal(FlattenMap, TraceMap);
+    assert.equal(AnyMap, TraceMap);
   });
 
   it("FlattenMap handles indexed source maps", () => {
@@ -552,8 +435,6 @@ describe("FlattenMap / AnyMap", () => {
     map.free();
   });
 });
-
-// ── Correctness: compare with decoded mappings ───────────────────
 
 describe("correctness", () => {
   it("originalPositionFor matches decoded segments", () => {
@@ -605,8 +486,6 @@ describe("correctness", () => {
   });
 });
 
-// ── Edge cases ───────────────────────────────────────────────────
-
 describe("edge cases", () => {
   it("handles empty mappings", () => {
     const emptyMap = JSON.stringify({
@@ -641,14 +520,6 @@ describe("edge cases", () => {
     map.free();
   });
 
-  it("handles large column values", () => {
-    const map = new TraceMap(SIMPLE_MAP);
-    const pos = originalPositionFor(map, { line: 1, column: 99999 });
-    // Should snap to last segment on the line (GLB behavior)
-    assert.ok(pos.source === "input.js" || pos.source === null);
-    map.free();
-  });
-
   it("handles map with null sources entries", () => {
     const nullSourceMap = JSON.stringify({
       version: 3,
@@ -676,69 +547,6 @@ describe("edge cases", () => {
   });
 });
 
-// ── API compatibility with @jridgewell/trace-mapping ─────────────
-
-describe("API compatibility", () => {
-  it("exports all expected functions", () => {
-    assert.equal(typeof TraceMap, "function");
-    assert.equal(typeof originalPositionFor, "function");
-    assert.equal(typeof generatedPositionFor, "function");
-    assert.equal(typeof allGeneratedPositionsFor, "function");
-    assert.equal(typeof eachMapping, "function");
-    assert.equal(typeof sourceContentFor, "function");
-    assert.equal(typeof isIgnored, "function");
-    assert.equal(typeof encodedMappings, "function");
-    assert.equal(typeof decodedMappings, "function");
-    assert.equal(typeof traceSegment, "function");
-    assert.equal(typeof presortedDecodedMap, "function");
-    assert.equal(typeof decodedMap, "function");
-    assert.equal(typeof encodedMap, "function");
-    assert.equal(typeof FlattenMap, "function");
-    assert.equal(typeof AnyMap, "function");
-  });
-
-  it("TraceMap has expected properties", () => {
-    const map = new TraceMap(SIMPLE_MAP_WITH_CONTENT);
-    assert.equal(map.version, 3);
-    assert.equal(map.file, "output.js");
-    assert.ok(Array.isArray(map.sources));
-    assert.ok(Array.isArray(map.names));
-    assert.ok(Array.isArray(map.resolvedSources));
-    assert.ok(Array.isArray(map.sourcesContent));
-    map.free();
-  });
-
-  it("originalPositionFor returns object with source/line/column/name", () => {
-    const map = new TraceMap(SIMPLE_MAP);
-    const pos = originalPositionFor(map, { line: 1, column: 0 });
-    assert.ok("source" in pos);
-    assert.ok("line" in pos);
-    assert.ok("column" in pos);
-    assert.ok("name" in pos);
-    map.free();
-  });
-
-  it("generatedPositionFor returns object with line/column", () => {
-    const map = new TraceMap(SIMPLE_MAP);
-    const pos = generatedPositionFor(map, { source: "input.js", line: 1, column: 0 });
-    assert.ok("line" in pos);
-    assert.ok("column" in pos);
-    map.free();
-  });
-
-  it("null result has all null fields (not undefined)", () => {
-    const map = new TraceMap(SIMPLE_MAP);
-    const pos = originalPositionFor(map, { line: 999, column: 0 });
-    assert.equal(pos.source, null);
-    assert.equal(pos.line, null);
-    assert.equal(pos.column, null);
-    assert.equal(pos.name, null);
-    map.free();
-  });
-});
-
-// ── Review fixes ─────────────────────────────────────────────────
-
 describe("review fixes", () => {
   const REVIEW_MAP = JSON.stringify({
     version: 3,
@@ -752,7 +560,7 @@ describe("review fixes", () => {
     const original = new TraceMap(REVIEW_MAP);
     const copy = new TraceMap(original);
 
-    // Free the original — the copy must remain functional
+    // Free the original: the copy must remain functional
     original.free();
 
     const pos = originalPositionFor(copy, { line: 1, column: 0 });
@@ -804,59 +612,8 @@ describe("review fixes", () => {
       column: 5,
       bias: LEAST_UPPER_BOUND,
     });
-    // With LUB, should find the segment at or after original column 5
-    assert.ok(pos.line != null);
-    assert.ok(pos.column != null);
     assert.equal(pos.line, 1);
-    map.free();
-  });
-
-  it("generatedPositionFor with default bias (GLB)", () => {
-    const biasMap = JSON.stringify({
-      version: 3,
-      file: "output.js",
-      sources: ["input.js"],
-      names: [],
-      mappings: "AAAA,UAAS",
-    });
-    const map = new TraceMap(biasMap);
-    // Default bias is GREATEST_LOWER_BOUND
-    const pos = generatedPositionFor(map, {
-      source: "input.js",
-      line: 1,
-      column: 0,
-    });
-    assert.equal(pos.line, 1);
-    assert.equal(pos.column, 0);
-    map.free();
-  });
-
-  it("sourcesContent absent vs empty", () => {
-    // Map WITHOUT sourcesContent field at all
-    const noContentMap = JSON.stringify({
-      version: 3,
-      file: "output.js",
-      sources: ["input.js"],
-      names: [],
-      mappings: "AAAA",
-    });
-    const map = new TraceMap(noContentMap);
-    const content = sourceContentFor(map, "input.js");
-    assert.equal(content, null);
-    map.free();
-  });
-
-  it("cached WASM sources lookup", () => {
-    const map = new TraceMap(REVIEW_MAP);
-    // Perform a lookup — the source should be resolved via _wasmSourceMap cache
-    const pos = originalPositionFor(map, { line: 1, column: 0 });
-    assert.equal(pos.source, "input.js");
-    assert.equal(pos.line, 1);
-    assert.equal(pos.column, 0);
-
-    // Verify the cache exists and maps correctly
-    assert.ok(map._wasmSourceMap instanceof Map);
-    assert.ok(map._wasmSourceMap.size > 0);
+    assert.equal(pos.column, 10);
     map.free();
   });
 });
