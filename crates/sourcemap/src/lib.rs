@@ -5046,6 +5046,12 @@ mod tests {
     }
 
     #[test]
+    fn parse_error_display_scopes() {
+        let err = ParseError::Scopes(srcmap_scopes::ScopesError::UnclosedScope);
+        assert!(err.to_string().contains("scopes decode error"));
+    }
+
+    #[test]
     fn indexed_map_with_names_in_sections() {
         let json = r#"{
             "version": 3,
@@ -5699,6 +5705,18 @@ mod tests {
         let output = sm.to_json();
         assert!(output.contains("rangeMappings"));
         assert_eq!(SourceMap::from_json(&output).unwrap().range_mapping_count(), 2);
+    }
+
+    #[test]
+    fn range_mappings_absent_from_json_test() {
+        assert!(
+            !SourceMap::from_json(
+                r#"{"version":3,"sources":["input.js"],"names":[],"mappings":"AAAA"}"#
+            )
+            .unwrap()
+            .to_json()
+            .contains("rangeMappings")
+        );
     }
 
     #[test]

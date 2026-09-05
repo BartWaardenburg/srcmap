@@ -640,4 +640,13 @@ mod tests {
         let err = SourceMapHermes::from_json(json).unwrap_err();
         assert!(matches!(err, HermesError::InvalidFunctionMap(_)));
     }
+
+    #[test]
+    fn error_display() {
+        let err = HermesError::InvalidFunctionMap("test error".to_string());
+        assert_eq!(err.to_string(), "invalid function map: test error");
+
+        let err = HermesError::Vlq(DecodeError::UnexpectedEof { offset: 5 });
+        assert!(err.to_string().contains("VLQ"));
+    }
 }

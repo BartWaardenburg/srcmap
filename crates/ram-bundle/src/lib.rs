@@ -392,8 +392,8 @@ mod tests {
         assert!(bundle.get_module(1).is_none());
         assert!(bundle.get_module(2).is_some());
 
-        // Only 2 non-empty modules
-        assert_eq!(bundle.modules().count(), 2);
+        // Only 2 non-empty modules, keeping their real slot ids
+        assert_eq!(bundle.modules().map(|m| m.id).collect::<Vec<u32>>(), vec![0, 2]);
     }
 
     #[test]
@@ -439,5 +439,20 @@ mod tests {
         let truncated = &data[..data.len() - 5];
         let err = IndexedRamBundle::from_bytes(truncated).unwrap_err();
         assert!(matches!(err, RamBundleError::InvalidEntry(_)));
+    }
+
+    #[test]
+    fn test_is_unbundle_dir_nonexistent() {
+        assert!(!is_unbundle_dir(Path::new("/nonexistent/path")));
+    }
+
+    #[test]
+    fn test_display_errors() {
+        assert_eq!(RamBundleError::InvalidMagic.to_string(), "invalid RAM bundle magic number");
+        assert_eq!(RamBundleError::TooShort.to_string(), "data too short for RAM bundle header");
+        assert_eq!(
+            RamBundleError::InvalidEntry("bad".to_string()).to_string(),
+            "invalid module entry: bad"
+        );
     }
 }

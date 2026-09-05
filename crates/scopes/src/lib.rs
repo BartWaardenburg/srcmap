@@ -1131,4 +1131,17 @@ mod tests {
         let err = decode_scopes(raw, &names, 1).unwrap_err();
         assert!(matches!(err, ScopesError::UnclosedRange));
     }
+
+    #[test]
+    fn scopes_error_display() {
+        assert_eq!(ScopesError::UnmatchedScopeEnd.to_string(), "scope end without matching start");
+        assert_eq!(ScopesError::UnclosedScope.to_string(), "scope opened but never closed");
+        assert_eq!(ScopesError::UnmatchedRangeEnd.to_string(), "range end without matching start");
+        assert_eq!(ScopesError::UnclosedRange.to_string(), "range opened but never closed");
+        assert_eq!(ScopesError::InvalidNameIndex(42).to_string(), "invalid name index: 42");
+
+        let err: ScopesError = srcmap_codec::DecodeError::UnexpectedEof { offset: 5 }.into();
+        assert!(matches!(err, ScopesError::Vlq(_)));
+        assert!(err.to_string().contains("VLQ decode error"));
+    }
 }
