@@ -107,6 +107,18 @@ describe("TraceMap constructor", () => {
     map[Symbol.dispose]();
   });
 
+  it("handles indexed source maps", () => {
+    const map = new TraceMap(INDEXED_MAP);
+    assert.ok(map.sources.length >= 2 || map.resolvedSources.length >= 2);
+    map.free();
+  });
+
+  it("reads ignoreList", () => {
+    const map = new TraceMap(IGNORE_LIST_MAP);
+    assert.deepEqual(map.ignoreList, [1]);
+    map.free();
+  });
+
   it("reads x_google_ignoreList as ignoreList", () => {
     const map = new TraceMap(X_GOOGLE_IGNORE_MAP);
     assert.deepEqual(map.ignoreList, [1]);
@@ -543,6 +555,37 @@ describe("edge cases", () => {
     const map = new TraceMap(mixedContent);
     assert.equal(sourceContentFor(map, "a.js"), null);
     assert.equal(sourceContentFor(map, "b.js"), "const y = 2;");
+    map.free();
+  });
+});
+
+describe("API compatibility", () => {
+  it("exports all expected functions", () => {
+    assert.equal(typeof TraceMap, "function");
+    assert.equal(typeof originalPositionFor, "function");
+    assert.equal(typeof generatedPositionFor, "function");
+    assert.equal(typeof allGeneratedPositionsFor, "function");
+    assert.equal(typeof eachMapping, "function");
+    assert.equal(typeof sourceContentFor, "function");
+    assert.equal(typeof isIgnored, "function");
+    assert.equal(typeof encodedMappings, "function");
+    assert.equal(typeof decodedMappings, "function");
+    assert.equal(typeof traceSegment, "function");
+    assert.equal(typeof presortedDecodedMap, "function");
+    assert.equal(typeof decodedMap, "function");
+    assert.equal(typeof encodedMap, "function");
+    assert.equal(typeof FlattenMap, "function");
+    assert.equal(typeof AnyMap, "function");
+  });
+
+  it("TraceMap has expected properties", () => {
+    const map = new TraceMap(SIMPLE_MAP_WITH_CONTENT);
+    assert.equal(map.version, 3);
+    assert.equal(map.file, "output.js");
+    assert.ok(Array.isArray(map.sources));
+    assert.ok(Array.isArray(map.names));
+    assert.ok(Array.isArray(map.resolvedSources));
+    assert.ok(Array.isArray(map.sourcesContent));
     map.free();
   });
 });

@@ -65,6 +65,12 @@ describe("SourceMapConsumer constructor", () => {
     consumer.destroy();
   });
 
+  it("exposes file property", () => {
+    const consumer = new SourceMapConsumer(SIMPLE_MAP);
+    assert.equal(consumer.file, "output.js");
+    consumer.destroy();
+  });
+
   it("exposes sourceRoot property", () => {
     const consumer = new SourceMapConsumer({
       version: 3,
@@ -372,6 +378,62 @@ describe("multi-source consumer", () => {
     assert.equal(contentB, "// b.js\nconst y = 2;");
 
     consumer.destroy();
+  });
+});
+
+describe("API compatibility with source-map v0.6", () => {
+  it("exports all expected classes and constants", () => {
+    assert.equal(typeof SourceMapConsumer, "function");
+    assert.equal(typeof SourceMapGenerator, "function");
+    assert.equal(typeof GREATEST_LOWER_BOUND, "number");
+    assert.equal(typeof LEAST_UPPER_BOUND, "number");
+  });
+
+  it("SourceMapConsumer has expected methods", () => {
+    const consumer = new SourceMapConsumer(SIMPLE_MAP);
+    assert.equal(typeof consumer.originalPositionFor, "function");
+    assert.equal(typeof consumer.generatedPositionFor, "function");
+    assert.equal(typeof consumer.eachMapping, "function");
+    assert.equal(typeof consumer.sourceContentFor, "function");
+    assert.equal(typeof consumer.destroy, "function");
+    consumer.destroy();
+  });
+
+  it("SourceMapGenerator has expected methods", () => {
+    const gen = new SourceMapGenerator();
+    assert.equal(typeof gen.addMapping, "function");
+    assert.equal(typeof gen.setSourceContent, "function");
+    assert.equal(typeof gen.toJSON, "function");
+    assert.equal(typeof gen.toString, "function");
+    assert.equal(typeof gen.applySourceMap, "function");
+    gen.destroy();
+  });
+
+  it("eachMapping result has all expected fields", () => {
+    const consumer = new SourceMapConsumer(SIMPLE_MAP);
+    consumer.eachMapping((m) => {
+      assert.ok("generatedLine" in m);
+      assert.ok("generatedColumn" in m);
+      assert.ok("source" in m);
+      assert.ok("originalLine" in m);
+      assert.ok("originalColumn" in m);
+      assert.ok("name" in m);
+      assert.ok("lastGeneratedColumn" in m);
+    });
+    consumer.destroy();
+  });
+
+  it("applySourceMap throws when both sourceFile and consumer.file are missing", () => {
+    const gen = new SourceMapGenerator();
+    const consumer = new SourceMapConsumer({
+      version: 3,
+      sources: ["input.js"],
+      names: [],
+      mappings: "AAAA",
+    });
+    assert.throws(() => gen.applySourceMap(consumer, null));
+    consumer.destroy();
+    gen.destroy();
   });
 });
 
