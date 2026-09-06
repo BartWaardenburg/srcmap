@@ -61,7 +61,7 @@ fn flat_positions_for(
     lookup: impl Fn(u32, u32) -> Option<OriginalLocation>,
 ) -> Vec<i32> {
     let mut out = Vec::with_capacity(positions.len() / 2 * 4);
-    for pair in positions.chunks_exact(2) {
+    for pair in positions.as_chunks::<2>().0 {
         out.extend_from_slice(&flat_position(lookup(pair[0] as u32, pair[1] as u32).as_ref()));
     }
     out
